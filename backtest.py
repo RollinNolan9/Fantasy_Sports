@@ -1,16 +1,18 @@
 """Backtest: project past seasons and score vs what actually happened.
 
-Evaluates the top N players per position by ACTUAL points -- the slice that
-decides fantasy leagues. A player a model didn't project (e.g. a freshman the
-heuristic can't see) counts as a prediction of 0, so covering breakouts is
-rewarded. Reports MAE and Spearman rank correlation for the naive
-"repeat last season" baseline, the heuristic, and the ML model.
-Usage: python3 backtest.py [years...]
+The target is fantasy points per game PLAYED x 12 (health-conditional,
+matching what the models project; >=4 games to keep rates meaningful),
+for the top N players per position by that measure. A player a model didn't
+project (e.g. a freshman the heuristic can't see) counts as a prediction of
+0, so covering breakouts is rewarded. Reports MAE and Spearman rank
+correlation for the naive "repeat last season's rate" baseline, the
+heuristic, and the ML model. Usage: python3 backtest.py [years...]
 """
 import sys
 
 import pandas as pd
 
+from features import games_played
 from model import predict_year
 from projections import GAMES, project, season_points
 
@@ -21,12 +23,19 @@ def spearman(a, b):
     return a.rank().corr(b.rank())  # avoids the scipy dependency
 
 
+def rate_points(year, min_games):
+    s = season_points(year).groupby("playerId").agg(
+        position=("position", "first"), pts=("points", "sum"))
+    s["gp"] = games_played(year).reindex(s.index).fillna(0)
+    s = s[s["gp"] >= min_games]
+    s["actual"] = s["pts"] / s["gp"] * GAMES
+    return s
+
+
 def evaluate(year):
-    actual = season_points(year).groupby("playerId").agg(
-        position=("position", "first"), actual=("fppg", "sum"))
-    actual["actual"] *= GAMES
+    actual = rate_points(year, min_games=4)
     preds = {
-        "naive": season_points(year - 1).groupby("playerId")["fppg"].sum() * GAMES,
+        "naive": rate_points(year - 1, min_games=1)["actual"],
         "heur": project(year).set_index("playerId")["proj_points"],
         "ml": predict_year(year).set_index("playerId")["proj_points"],
     }

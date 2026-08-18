@@ -57,6 +57,33 @@ def fetch_year(year):
         print(f"{year}: {len(df)} SP+ ratings")
 
 
+GAMES_SINCE = 2020  # games-played only needed for post-COVID training + 1 feature lag
+
+
+def fetch_games(year):
+    """Count games each player recorded an offensive stat in (per-week box scores)."""
+    out = f"data/games_{year}.csv"
+    if os.path.exists(out):
+        return
+    seen = set()
+    for season_type, weeks in (("regular", range(0, 17)), ("postseason", range(1, 4))):
+        for wk in weeks:
+            try:
+                games = get("/games/players", year=year, week=wk, seasonType=season_type)
+            except requests.HTTPError:
+                continue
+            for g in games:
+                for t in g["teams"]:
+                    for cat in t["categories"]:
+                        if cat["name"] in ("passing", "rushing", "receiving"):
+                            for ty in cat["types"]:
+                                for a in ty["athletes"]:
+                                    seen.add((str(a["id"]), g["id"]))
+    df = pd.DataFrame(sorted(seen), columns=["playerId", "gameId"])
+    df.groupby("playerId").size().rename("games").reset_index().to_csv(out, index=False)
+    print(f"{year}: games played for {df['playerId'].nunique()} players")
+
+
 def fetch_coaches(min_year):
     out = "data/coach_seasons.csv"
     if os.path.exists(out):
@@ -73,4 +100,6 @@ if __name__ == "__main__":
     years = [int(a) for a in sys.argv[1:]] or range(2014, 2027)
     for y in years:
         fetch_year(y)
+        if y >= GAMES_SINCE and os.path.exists(f"data/players_{y}.csv"):
+            fetch_games(y)
     fetch_coaches(min(years))

@@ -25,12 +25,17 @@ to match your league.
 
 ## Model
 
-Gradient boosting (`model.py`) trained on every player-season since 2017,
-predicting fantasy points per team-game for everyone on the target year's FBS
-roster -- including true freshmen and transfers. Features (`features.py`), all
-knowable preseason:
+Gradient boosting (`model.py`) trained on post-COVID player-seasons (2021+,
+the portal/NIL era), predicting fantasy points per game PLAYED (x12) for
+everyone on the target year's FBS roster -- including true freshmen and
+transfers. Projections are health-conditional: they assume the player is on
+the field, since injuries and opt-outs can't be predicted preseason. Games
+played are derived from per-week box scores; training rows are weighted by
+games played so 2-game rates count as weak evidence. Features
+(`features.py`), all knowable preseason:
 
-- production history: fantasy pts/team-game in each of the last 3 seasons
+- production history: fantasy pts/team-game in each of the last 3 seasons,
+  plus last season's games played and pts per game played
 - role opportunity: share of the team's position-group production that
   departed (roster diff), the player's returning depth rank, prior usage share
 - progression: class year, 247-composite recruit rating/stars
@@ -45,20 +50,21 @@ knowable preseason:
 `projections.py` keeps the simple heuristic (3-yr weighted average regressed
 to positional mean) as a baseline.
 
-## Backtest (2023-2025, top players per position by actual points)
+## Backtest (2023-2025, top players per position)
 
-Players a model can't see (e.g. freshmen for the heuristic) count as
-projections of 0, so covering breakouts is rewarded.
+Target = actual fantasy pts per game played x 12 (>=4 games), matching the
+health-conditional projections. Players a model can't see (e.g. freshmen for
+the heuristic) count as projections of 0, so covering breakouts is rewarded.
 
-| metric | naive "repeat last year" | heuristic | ML model |
+| metric | naive "repeat last year's rate" | heuristic | ML model |
 |---|---|---|---|
-| Spearman rank corr | 0.183 | 0.196 | **0.214** |
-| MAE (points) | 106.3 | 114.9 | **105.0** |
+| Spearman rank corr | 0.226 | 0.216 | **0.227** |
+| MAE (points) | 95.1 | 127.1 | **85.4** |
 
 Permutation importance says last-year production dominates (as it should),
 with real contributions from transfer status, vacated share, class year, and
-recruit rating. The HC play-calling features contribute ~nothing at the
-player level. Known gaps: coordinator (OC) histories would need scraping an
-external source; per-player games played (injury detection) isn't in the CFBD
-season endpoint; strength of schedule. Any addition must beat these numbers
+recruit rating. Tried and rejected via backtest: momentum extrapolation,
+coach-aware team context (HC profiles replacing team history), pre-COVID
+training data. Known gaps: coordinator (OC) histories would need scraping an
+external source; strength of schedule. Any addition must beat these numbers
 in `backtest.py` to ship.

@@ -61,6 +61,13 @@ def hc_profile(coach, year):
 
 
 @lru_cache(maxsize=None)
+def games_played(year):
+    """Games in which each player recorded an offensive stat."""
+    g = pd.read_csv(f"data/games_{year}.csv", dtype={"playerId": str})
+    return g.set_index("playerId")["games"]
+
+
+@lru_cache(maxsize=None)
 def recruit_map(max_year):
     """Cumulative recruit pedigree lookups: by CFBD athleteId and by recruit id."""
     by_athlete, by_recruit = {}, {}
@@ -110,9 +117,15 @@ def build_features(year):
     for k in (1, 2, 3):
         s = season_points(year - k)
         hist[k] = s.groupby("playerId").agg(
-            fppg=("fppg", "sum"), position=("position", "first"), team=("team", "first"))
+            fppg=("fppg", "sum"), points=("points", "sum"),
+            position=("position", "first"), team=("team", "first"))
         df[f"fppg_{k}"] = hist[k]["fppg"].reindex(df.index).fillna(0)
     df["played_1"] = (hist[1]["fppg"].reindex(df.index).notna()).astype(int)
+    # last-season participation and per-game-played rate (health-conditional skill)
+    gp1 = games_played(year - 1).reindex(df.index).fillna(0)
+    df["games_1"] = gp1
+    df["rate_1"] = (hist[1]["points"].reindex(df.index).fillna(0)
+                    / gp1.replace(0, 1)) * (gp1 > 0)
 
     # position: prefer stats-derived (most recent), fall back to roster listing
     pos = hist[1]["position"].reindex(df.index)
@@ -182,11 +195,17 @@ def build_features(year):
     for p in POSITIONS:
         df[f"pos_{p}"] = (df["position"] == p).astype(int)
 
-    # label: fantasy points per team-game actually scored (0 = rostered, no stats)
+    # label: fantasy points per game PLAYED -- health-conditional, so a lost
+    # season doesn't teach the model that healthy production declines.
+    # weight: games played (a 2-game rate is weak evidence); never-played
+    # roster rows keep weight 1 at label 0 as a depth-chart anchor.
     try:
-        lab = season_points(year).groupby("playerId")["fppg"].sum()
-        df["label"] = lab.reindex(df.index).fillna(0)
+        pts = season_points(year).groupby("playerId")["points"].sum()
+        gp = games_played(year).reindex(df.index).fillna(0)
+        df["label"] = (pts.reindex(df.index).fillna(0) / gp.replace(0, 1)) * (gp > 0)
+        df["weight"] = gp.clip(lower=1)
     except FileNotFoundError:
         df["label"] = float("nan")
+        df["weight"] = 1.0
 
     return df.rename_axis("playerId").reset_index()
