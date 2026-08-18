@@ -32,10 +32,15 @@ def fetch_year(year):
     if not os.path.exists(players):
         rows = []
         for cat in CATEGORIES:
-            rows += get("/stats/player/season", year=year, category=cat)
+            # regular season only: bowls/playoffs/CCGs aren't part of the fantasy season
+            rows += get("/stats/player/season", year=year, category=cat, seasonType="regular")
         if rows:  # empty for seasons not yet played
             pd.DataFrame(rows).to_csv(players, index=False)
             pd.DataFrame(get("/stats/season", year=year)).to_csv(f"data/teams_{year}.csv", index=False)
+            games = get("/games", year=year, seasonType="regular")
+            counts = pd.Series([g["homeTeam"] for g in games] + [g["awayTeam"] for g in games])
+            (counts.value_counts().rename_axis("team").rename("games").reset_index()
+             .to_csv(f"data/teamgames_{year}.csv", index=False))
         print(f"{year}: {len(rows)} player stat rows")
     roster = f"data/roster_{year}.csv"
     if not os.path.exists(roster):
@@ -66,19 +71,18 @@ def fetch_games(year):
     if os.path.exists(out):
         return
     seen = set()
-    for season_type, weeks in (("regular", range(0, 17)), ("postseason", range(1, 4))):
-        for wk in weeks:
-            try:
-                games = get("/games/players", year=year, week=wk, seasonType=season_type)
-            except requests.HTTPError:
-                continue
-            for g in games:
-                for t in g["teams"]:
-                    for cat in t["categories"]:
-                        if cat["name"] in ("passing", "rushing", "receiving"):
-                            for ty in cat["types"]:
-                                for a in ty["athletes"]:
-                                    seen.add((str(a["id"]), g["id"]))
+    for wk in range(0, 17):
+        try:
+            games = get("/games/players", year=year, week=wk, seasonType="regular")
+        except requests.HTTPError:
+            continue
+        for g in games:
+            for t in g["teams"]:
+                for cat in t["categories"]:
+                    if cat["name"] in ("passing", "rushing", "receiving"):
+                        for ty in cat["types"]:
+                            for a in ty["athletes"]:
+                                seen.add((str(a["id"]), g["id"]))
     df = pd.DataFrame(sorted(seen), columns=["playerId", "gameId"])
     df.groupby("playerId").size().rename("games").reset_index().to_csv(out, index=False)
     print(f"{year}: games played for {df['playerId'].nunique()} players")

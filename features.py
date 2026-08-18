@@ -192,6 +192,28 @@ def build_features(year):
         ratings.append(val or (0.0, 0.0))
     df[["recruit_rating", "recruit_stars"]] = ratings
 
+    # incoming competition at (team, position): the model can already see
+    # production leaving a room (vac_share); these see production ARRIVING --
+    # a workhorse with no competition differs from a forming committee
+    grp = df.groupby(["team", "position"])
+
+    def _second(s):
+        return s.nlargest(2).iloc[-1] if len(s) > 1 else 0.0
+
+    # best competitor's per-game rate last season (excluding self)
+    gmax = grp["rate_1"].transform("max")
+    gsec = grp["rate_1"].transform(_second)
+    df["comp_max_rate"] = gsec.where(df["rate_1"] >= gmax, gmax)
+    # production transferring INTO the room (excluding own arrival)
+    arriving = df["fppg_1"] * ((team_1 != df["team"]) & (df["played_1"] == 1))
+    df["comp_transfer_fppg"] = arriving.groupby(
+        [df["team"], df["position"]]).transform("sum") - arriving
+    # best unproven blue-chip in the room (excluding self)
+    fresh = df["recruit_rating"] * (df["played_1"] == 0)
+    fmax = fresh.groupby([df["team"], df["position"]]).transform("max")
+    fsec = fresh.groupby([df["team"], df["position"]]).transform(_second)
+    df["comp_fresh_rating"] = fsec.where(fresh >= fmax, fmax)
+
     for p in POSITIONS:
         df[f"pos_{p}"] = (df["position"] == p).astype(int)
 

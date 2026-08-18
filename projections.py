@@ -29,9 +29,7 @@ def season_points(year):
     pts = [SCORING.get(k, 0.0) for k in zip(df["category"], df["statType"])]
     df["points"] = stat * pts
     fp = df.groupby(["playerId", "player", "position", "team"], as_index=False)["points"].sum()
-    teams = pd.read_csv(f"data/teams_{year}.csv")
-    games = teams[teams["statName"] == "games"].set_index("team")["statValue"]
-    # per team-game so playoff/championship teams (13-16 games) aren't inflated
+    games = pd.read_csv(f"data/teamgames_{year}.csv").set_index("team")["games"]
     fp["fppg"] = fp["points"] / fp["team"].map(games).fillna(GAMES)
     fp["season"] = year
     return fp

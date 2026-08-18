@@ -28,16 +28,22 @@ to match your league.
 Gradient boosting (`model.py`) trained on post-COVID player-seasons (2021+,
 the portal/NIL era), predicting fantasy points per game PLAYED (x12) for
 everyone on the target year's FBS roster -- including true freshmen and
-transfers. Projections are health-conditional: they assume the player is on
-the field, since injuries and opt-outs can't be predicted preseason. Games
-played are derived from per-week box scores; training rows are weighted by
-games played so 2-game rates count as weak evidence. Features
-(`features.py`), all knowable preseason:
+transfers. All stats are REGULAR SEASON only (no bowls/playoffs/CCGs --
+they aren't part of the fantasy season). Projections are health-conditional:
+they assume the player is on the field, since injuries and opt-outs can't be
+predicted preseason. Games played are derived from per-week box scores;
+training rows are weighted by games played and by production (fitting the
+players who decide leagues), and the final projection blends in 25% of last
+season's raw rate to spread the top of the board. Features (`features.py`),
+all knowable preseason:
 
 - production history: fantasy pts/team-game in each of the last 3 seasons,
   plus last season's games played and pts per game played
 - role opportunity: share of the team's position-group production that
   departed (roster diff), the player's returning depth rank, prior usage share
+- incoming competition at the position: best competing returner's per-game
+  rate, production transferring in, best unproven blue-chip in the room --
+  a secure workhorse differs from a forming committee
 - progression: class year, 247-composite recruit rating/stars
 - transfers: placed on their new team, with an SP+ offense quality delta
   between old and new school; coach-follow transfers (new team's new HC is
@@ -58,8 +64,8 @@ the heuristic) count as projections of 0, so covering breakouts is rewarded.
 
 | metric | naive "repeat last year's rate" | heuristic | ML model |
 |---|---|---|---|
-| Spearman rank corr | 0.226 | 0.216 | **0.227** |
-| MAE (points) | 95.1 | 127.1 | **85.4** |
+| Spearman rank corr | 0.262 | 0.238 | **0.270** |
+| MAE (points) | 97.8 | 127.5 | **78.4** |
 
 Permutation importance says last-year production dominates (as it should),
 with real contributions from transfer status, vacated share, class year, and

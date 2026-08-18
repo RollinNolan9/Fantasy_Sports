@@ -11,10 +11,12 @@ import sys
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 
-from features import build_features
-from projections import GAMES, POSITIONS
+from features import build_features, games_played
+from projections import GAMES, POSITIONS, season_points
 
 FIRST_FEATURE_YEAR = 2021  # post-COVID only: portal/NIL era is a different game
+ALPHA = 5    # extra training weight per ~5 pts/game: fit the players who matter
+BLEND = 0.25  # weight on last season's raw rate in the final projection
 
 FEATURES = [
     "fppg_1", "fppg_2", "fppg_3", "played_1", "games_1", "rate_1",
@@ -23,6 +25,7 @@ FEATURES = [
     "plays_pg_1", "pass_rate_1",
     "hc_change", "hc_plays_delta", "hc_passrate_delta",
     "sp_off_1", "transferred", "transfer_off_delta", "followed_hc",
+    "comp_max_rate", "comp_transfer_fppg", "comp_fresh_rating",
 ] + [f"pos_{p}" for p in POSITIONS]
 
 
@@ -30,11 +33,16 @@ def predict_year(target):
     train = pd.concat([build_features(y) for y in range(FIRST_FEATURE_YEAR, target)])
     # defaults: a backtest sweep found no config meaningfully better
     m = HistGradientBoostingRegressor(random_state=0)
-    m.fit(train[FEATURES], train["label"], sample_weight=train["weight"])
-    te = build_features(target).copy()
-    te["proj_points"] = (pd.Series(m.predict(te[FEATURES]))
-                         .clip(lower=0) * GAMES).round(1)
-    return (te.sort_values("proj_points", ascending=False)
+    m.fit(train[FEATURES], train["label"],
+          sample_weight=train["weight"] * (1 + train["label"] / ALPHA))
+    te = build_features(target).set_index("playerId").copy()
+    ml = pd.Series(m.predict(te[FEATURES]), index=te.index).clip(lower=0) * GAMES
+    # blend in last season's raw per-game rate: the ML mean under-spreads the top
+    pts = season_points(target - 1).groupby("playerId")["points"].sum()
+    last_rate = (pts / games_played(target - 1).reindex(pts.index)).dropna() * GAMES
+    lr = last_rate.reindex(te.index)
+    te["proj_points"] = (BLEND * lr + (1 - BLEND) * ml).where(lr.notna(), ml).round(1)
+    return (te.reset_index().sort_values("proj_points", ascending=False)
             [["playerId", "name", "position", "team", "proj_points"]])
 
 
