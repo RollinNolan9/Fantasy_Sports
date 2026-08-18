@@ -15,6 +15,11 @@ import pandas as pd
 from projections import POSITIONS, season_points
 
 FIRST_DATA_YEAR = 2014
+# pseudo-count games: rate = pts * (12+k)/12 / (games+k). 0 = raw rate (NaN if
+# never played); shrinking small samples was tested and hurt rho AND yield --
+# the flashes carry real breakout signal. Role risk is priced by the games
+# model in model.py instead.
+RATE_SHRINK = 0
 
 
 @lru_cache(maxsize=None)
@@ -121,11 +126,13 @@ def build_features(year):
             position=("position", "first"), team=("team", "first"))
         df[f"fppg_{k}"] = hist[k]["fppg"].reindex(df.index).fillna(0)
     df["played_1"] = (hist[1]["fppg"].reindex(df.index).notna()).astype(int)
-    # last-season participation and per-game-played rate (health-conditional skill)
+    # last-season participation and per-game-played rate (health-conditional
+    # skill). Shrunk with a 4-game pseudo-count so a 2-game mop-up cameo isn't
+    # "the best rate in the room"; rescaled so a full 12-game season is exact.
     gp1 = games_played(year - 1).reindex(df.index).fillna(0)
     df["games_1"] = gp1
     df["rate_1"] = (hist[1]["points"].reindex(df.index).fillna(0)
-                    / gp1.replace(0, 1)) * (gp1 > 0)
+                    * ((12 + RATE_SHRINK) / 12) / (gp1 + RATE_SHRINK))
 
     # position: prefer stats-derived (most recent), fall back to roster listing
     pos = hist[1]["position"].reindex(df.index)
@@ -228,9 +235,11 @@ def build_features(year):
         pts = season_points(year).groupby("playerId")["points"].sum()
         gp = games_played(year).reindex(df.index).fillna(0)
         df["label"] = (pts.reindex(df.index).fillna(0) / gp.replace(0, 1)) * (gp > 0)
+        df["label_games"] = gp  # participation outcome, for the games model
         df["weight"] = gp.clip(lower=1)
     except FileNotFoundError:
         df["label"] = float("nan")
+        df["label_games"] = float("nan")
         df["weight"] = 1.0
 
     return df.rename_axis("playerId").reset_index()

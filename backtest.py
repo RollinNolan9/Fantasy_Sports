@@ -30,25 +30,37 @@ def rate_points(year, min_games):
     s = s[s["team"].isin(fbs)]  # FBS fantasy leagues only
     s["gp"] = games_played(year).reindex(s.index).fillna(0)
     s = s[s["gp"] >= min_games]
-    s["actual"] = s["pts"] / s["gp"] * GAMES
+    s["actual"] = (s["pts"] / s["gp"].where(s["gp"] > 0)) * GAMES
     return s
+
+
+def season_yield(year):
+    """What a season of each player was actually worth to a fantasy owner:
+    per-game rate x 12 for players with a real sample, raw total for cameos."""
+    s = rate_points(year, min_games=0)
+    return s["actual"].where(s["gp"] >= 6, s["pts"])
 
 
 def evaluate(year):
     actual = rate_points(year, min_games=4)
+    yields = season_yield(year)
     preds = {
-        "naive": rate_points(year - 1, min_games=1)["actual"],
-        "heur": project(year).set_index("playerId")["proj_points"],
-        "ml": predict_year(year).set_index("playerId")["proj_points"],
+        "naive": rate_points(year - 1, min_games=1)[["position", "actual"]]
+                 .rename(columns={"actual": "proj_points"}),
+        "heur": project(year).set_index("playerId")[["position", "proj_points"]],
+        "ml": predict_year(year).set_index("playerId")[["position", "proj_points"]],
     }
     rows = []
     for pos, g in actual.groupby("position"):
         g = g.nlargest(TOP_N[pos], "actual")
         row = {"year": year, "pos": pos, "n": len(g)}
         for name, p in preds.items():
-            pr = p.reindex(g.index).fillna(0)
+            pr = p["proj_points"].reindex(g.index).fillna(0)
             row[f"{name}_mae"] = round((pr - g["actual"]).abs().mean(), 1)
             row[f"{name}_rho"] = round(spearman(pr, g["actual"]), 3)
+            # draft-board quality: what the model's own top N would have scored
+            picks = p[p["position"] == pos].nlargest(TOP_N[pos], "proj_points")
+            row[f"{name}_yield"] = round(yields.reindex(picks.index).fillna(0).mean(), 1)
         rows.append(row)
     return rows
 
@@ -58,5 +70,5 @@ if __name__ == "__main__":
     results = pd.DataFrame([r for y in years for r in evaluate(y)])
     print(results.to_string(index=False))
     print("\noverall means:")
-    cols = [c for c in results.columns if c.endswith(("_mae", "_rho"))]
+    cols = [c for c in results.columns if c.endswith(("_mae", "_rho", "_yield"))]
     print(results[cols].mean().round(3).to_string())

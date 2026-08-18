@@ -34,8 +34,12 @@ they assume the player is on the field, since injuries and opt-outs can't be
 predicted preseason. Games played are derived from per-week box scores;
 training rows are weighted by games played and by production (fitting the
 players who decide leagues), and the final projection blends in 25% of last
-season's raw rate to spread the top of the board. Features (`features.py`),
-all knowable preseason:
+season's raw rate to spread the top of the board. A second gradient-boosting
+model predicts expected games played from the same features and gates the
+projection (sqrt(games/9), capped at 1): backups stuck behind entrenched
+starters get priced as backups, while full-time roles pass through
+untouched -- role risk is priced, injury risk still isn't. Features
+(`features.py`), all knowable preseason:
 
 - production history: fantasy pts/team-game in each of the last 3 seasons,
   plus last season's games played and pts per game played
@@ -64,16 +68,22 @@ Target = actual fantasy pts per game played x 12 (>=4 games), FBS players
 only (FCS players aren't draftable in FBS leagues), matching the
 health-conditional projections. Players a model can't see (e.g. freshmen for
 the heuristic) count as projections of 0, so covering breakouts is rewarded.
+Yield = what each model's own top-N picks per position actually scored --
+the draft-board metric, which (unlike the other two) punishes false
+positives like projecting starter numbers for a benched backup.
 
 | metric | naive "repeat last year's rate" | heuristic | ML model |
 |---|---|---|---|
 | Spearman rank corr | 0.200 | 0.209 | **0.215** |
-| MAE (points) | 91.7 | 110.1 | **65.2** |
+| MAE (points) | 91.7 | 110.1 | **72.9** |
+| Yield of own top picks (pts) | 82.9 | 100.0 | **101.8** |
 
 Permutation importance says last-year production dominates (as it should),
 with real contributions from transfer status, vacated share, class year, and
 recruit rating. Tried and rejected via backtest: momentum extrapolation,
 coach-aware team context (HC profiles replacing team history), pre-COVID
-training data. Known gaps: coordinator (OC) histories would need scraping an
+training data, small-sample rate shrinkage (mop-up flashes carry real
+breakout signal; the games model prices role risk instead). Known gaps:
+coordinator (OC) histories would need scraping an
 external source; strength of schedule. Any addition must beat these numbers
 in `backtest.py` to ship.

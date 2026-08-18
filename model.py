@@ -7,11 +7,16 @@ player is on the field, since injuries can't be predicted preseason.
 Usage: python3 model.py <target_year>
 """
 import sys
+import warnings
 
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 
-from features import build_features, games_played
+# numpy quantile binning over intentionally-NaN features (e.g. rate_1 for
+# players who never played) emits a harmless warning
+warnings.filterwarnings("ignore", message="invalid value encountered in subtract")
+
+from features import RATE_SHRINK, build_features, games_played
 from projections import GAMES, POSITIONS, season_points
 
 FIRST_FEATURE_YEAR = 2021  # post-COVID only: portal/NIL era is a different game
@@ -29,20 +34,36 @@ FEATURES = [
 ] + [f"pos_{p}" for p in POSITIONS]
 
 
+FULL_ROLE_GAMES = 9  # predicted games at which a role counts as full-time
+
+
 def predict_year(target):
     train = pd.concat([build_features(y) for y in range(FIRST_FEATURE_YEAR, target)])
     # defaults: a backtest sweep found no config meaningfully better
     m = HistGradientBoostingRegressor(random_state=0)
     m.fit(train[FEATURES], train["label"],
           sample_weight=train["weight"] * (1 + train["label"] / ALPHA))
+    # second model: expected games played, i.e. will he actually have a role?
+    # Gates backups stuck behind entrenched starters without re-pricing injury
+    # risk for full-time roles (factor is 1 at >= FULL_ROLE_GAMES).
+    gm = HistGradientBoostingRegressor(random_state=0)
+    gm.fit(train[FEATURES], train["label_games"])
     te = build_features(target).set_index("playerId").copy()
+    # sqrt softens the gate: backtest sweep found it keeps most of the ungated
+    # rank correlation while retaining nearly all of the yield gain
+    role = ((pd.Series(gm.predict(te[FEATURES]), index=te.index)
+             / FULL_ROLE_GAMES).clip(0, 1)) ** 0.5
     ml = pd.Series(m.predict(te[FEATURES]), index=te.index).clip(lower=0) * GAMES
-    # blend in last season's raw per-game rate: the ML mean under-spreads the top
+    # blend in last season's per-game rate: the ML mean under-spreads the top.
+    # Same 4-game pseudo-count shrinkage as rate_1: exact for a 12-game season,
+    # crushing for mop-up cameos.
     pts = season_points(target - 1).groupby("playerId")["points"].sum()
-    last_rate = (pts / games_played(target - 1).reindex(pts.index)).dropna() * GAMES
+    gp = games_played(target - 1).reindex(pts.index)
+    last_rate = (pts * ((12 + RATE_SHRINK) / 12) / (gp + RATE_SHRINK)).dropna() * GAMES
     lr = last_rate.reindex(te.index)
     lr = lr.where(te["from_fcs"] == 0)  # raw FCS rates don't translate; ML only
-    te["proj_points"] = (BLEND * lr + (1 - BLEND) * ml).where(lr.notna(), ml).round(1)
+    te["proj_points"] = ((BLEND * lr + (1 - BLEND) * ml).where(lr.notna(), ml)
+                         * role).round(1)
     te = te.reset_index().sort_values("proj_points", ascending=False)
     te["rank"] = range(1, len(te) + 1)
     te["pos_rank"] = (te["position"]
