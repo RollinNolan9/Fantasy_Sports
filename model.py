@@ -24,7 +24,7 @@ FEATURES = [
     "class_year", "recruit_rating", "recruit_stars",
     "plays_pg_1", "pass_rate_1",
     "hc_change", "hc_plays_delta", "hc_passrate_delta",
-    "sp_off_1", "transferred", "transfer_off_delta", "followed_hc",
+    "sp_off_1", "transferred", "transfer_off_delta", "followed_hc", "from_fcs",
     "comp_max_rate", "comp_transfer_fppg", "comp_fresh_rating",
 ] + [f"pos_{p}" for p in POSITIONS]
 
@@ -41,6 +41,7 @@ def predict_year(target):
     pts = season_points(target - 1).groupby("playerId")["points"].sum()
     last_rate = (pts / games_played(target - 1).reindex(pts.index)).dropna() * GAMES
     lr = last_rate.reindex(te.index)
+    lr = lr.where(te["from_fcs"] == 0)  # raw FCS rates don't translate; ML only
     te["proj_points"] = (BLEND * lr + (1 - BLEND) * ml).where(lr.notna(), ml).round(1)
     te = te.reset_index().sort_values("proj_points", ascending=False)
     te["rank"] = range(1, len(te) + 1)

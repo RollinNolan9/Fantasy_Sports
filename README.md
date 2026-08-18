@@ -48,7 +48,9 @@ all knowable preseason:
 - transfers: placed on their new team, with an SP+ offense quality delta
   between old and new school; coach-follow transfers (new team's new HC is
   the player's old HC) are flagged and exempt from that delta, since the
-  new team's last-season offense rating isn't the offense they're joining
+  new team's last-season offense rating isn't the offense they're joining;
+  FCS-sourced production is flagged (`from_fcs`) so the model learns the
+  level-of-competition discount, and it is excluded from the rate blend
 - coaching: HC change flag + how the new HC's historical pace/pass-rate
   profile differs from the team's (HC only -- CFBD has no coordinator data)
 - team context: pace, pass rate, SP+ offensive rating
@@ -58,14 +60,15 @@ to positional mean) as a baseline.
 
 ## Backtest (2023-2025, top players per position)
 
-Target = actual fantasy pts per game played x 12 (>=4 games), matching the
+Target = actual fantasy pts per game played x 12 (>=4 games), FBS players
+only (FCS players aren't draftable in FBS leagues), matching the
 health-conditional projections. Players a model can't see (e.g. freshmen for
 the heuristic) count as projections of 0, so covering breakouts is rewarded.
 
 | metric | naive "repeat last year's rate" | heuristic | ML model |
 |---|---|---|---|
-| Spearman rank corr | 0.262 | 0.238 | **0.270** |
-| MAE (points) | 97.8 | 127.5 | **78.4** |
+| Spearman rank corr | 0.200 | 0.209 | **0.215** |
+| MAE (points) | 91.7 | 110.1 | **65.2** |
 
 Permutation importance says last-year production dominates (as it should),
 with real contributions from transfer status, vacated share, class year, and

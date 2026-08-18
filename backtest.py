@@ -25,7 +25,9 @@ def spearman(a, b):
 
 def rate_points(year, min_games):
     s = season_points(year).groupby("playerId").agg(
-        position=("position", "first"), pts=("points", "sum"))
+        position=("position", "first"), team=("team", "first"), pts=("points", "sum"))
+    fbs = pd.read_csv(f"data/sp_{year}.csv")["team"]
+    s = s[s["team"].isin(fbs)]  # FBS fantasy leagues only
     s["gp"] = games_played(year).reindex(s.index).fillna(0)
     s = s[s["gp"] >= min_games]
     s["actual"] = s["pts"] / s["gp"] * GAMES

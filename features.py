@@ -164,6 +164,9 @@ def build_features(year):
     sp = pd.read_csv(f"data/sp_{year - 1}.csv").set_index("team")["offense.rating"]
     df["sp_off_1"] = sp.reindex(df["team"]).fillna(sp.mean()).values
     df["transferred"] = ((df["played_1"] == 1) & (team_1 != df["team"])).astype(int)
+    # production earned against FCS competition doesn't translate 1:1; the
+    # model learns the discount from historical FCS->FBS transfers
+    df["from_fcs"] = ((df["played_1"] == 1) & ~team_1.isin(sp.index)).astype(int)
     old_off = sp.reindex(team_1).fillna(sp.min()).values  # missing old team ~ FCS-level
     df["transfer_off_delta"] = (df["sp_off_1"] - old_off) * df["transferred"]
     # coach-follow transfers: new team's new HC is the player's old HC, so the
