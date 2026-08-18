@@ -1,5 +1,6 @@
 """Season-long fantasy projections. Usage: python3 projections.py <target_year>"""
 import sys
+from functools import lru_cache
 
 import pandas as pd
 
@@ -16,8 +17,12 @@ SHRINK = 0.75                       # weight on player history vs positional mea
 GAMES = 12                          # regular-season games to project
 
 
+@lru_cache(maxsize=None)
 def season_points(year):
-    """Fantasy points per team-game for every QB/RB/WR/TE player-season."""
+    """Fantasy points per team-game for every QB/RB/WR/TE player-season.
+
+    Cached: callers must not mutate the returned frame (use .copy()).
+    """
     df = pd.read_csv(f"data/players_{year}.csv", dtype={"playerId": str})
     df = df[df["position"].isin(POSITIONS)].copy()
     stat = pd.to_numeric(df["stat"], errors="coerce").fillna(0)

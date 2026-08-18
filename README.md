@@ -13,9 +13,11 @@ echo "CFBD_API_KEY=<your key>" > .env   # free key from collegefootballdata.com
 ## Usage
 
 ```bash
-python3 fetch.py               # download 2019-2026 stats + rosters to data/ (cached)
-python3 projections.py 2026    # -> projections_2026.csv, ranked by projected points
-python3 backtest.py            # score the model vs actuals for 2022-2025
+python3 fetch.py               # download 2014-2026 stats, rosters, recruits,
+                               # SP+ ratings, coach history to data/ (cached)
+python3 model.py 2026          # -> projections_2026.csv, ranked by projected points
+python3 backtest.py            # score all models vs actuals for 2023-2025
+python3 projections.py 2026    # simple heuristic baseline, for comparison
 ```
 
 Scoring is 0.5 PPR with 4-point passing TDs; edit `SCORING` in `projections.py`
@@ -23,21 +25,38 @@ to match your league.
 
 ## Model
 
-Projected points = 12 games x a blend of the player's fantasy points per
-team-game over the last 3 seasons (weighted 0.6/0.3/0.1, most recent first),
-regressed 25% toward the positional mean. Only players on the target year's
-FBS roster are projected, so graduations/NFL departures drop out and transfers
-land on their new team.
+Gradient boosting (`model.py`) trained on every player-season since 2017,
+predicting fantasy points per team-game for everyone on the target year's FBS
+roster -- including true freshmen and transfers. Features (`features.py`), all
+knowable preseason:
 
-## Backtest (2022-2025, top players per position by actual points)
+- production history: fantasy pts/team-game in each of the last 3 seasons
+- role opportunity: share of the team's position-group production that
+  departed (roster diff), the player's returning depth rank, prior usage share
+- progression: class year, 247-composite recruit rating/stars
+- transfers: placed on their new team, with an SP+ offense quality delta
+  between old and new school
+- coaching: HC change flag + how the new HC's historical pace/pass-rate
+  profile differs from the team's (HC only -- CFBD has no coordinator data)
+- team context: pace, pass rate, SP+ offensive rating
 
-| metric | model | naive "repeat last year" |
-|---|---|---|
-| Spearman rank corr | 0.159 | 0.143 |
-| MAE (points) | 113.0 | 107.0 |
+`projections.py` keeps the simple heuristic (3-yr weighted average regressed
+to positional mean) as a baseline.
 
-Pure production history is a weak signal in college football -- roster churn
-means breakouts dominate. Known gaps, in rough order of expected value: depth
-chart / returning-starter signals, freshman & recruit projections, team pace
-and strength-of-schedule adjustments. Any addition must beat these numbers in
-`backtest.py` to ship.
+## Backtest (2023-2025, top players per position by actual points)
+
+Players a model can't see (e.g. freshmen for the heuristic) count as
+projections of 0, so covering breakouts is rewarded.
+
+| metric | naive "repeat last year" | heuristic | ML model |
+|---|---|---|---|
+| Spearman rank corr | 0.183 | 0.196 | **0.218** |
+| MAE (points) | 106.3 | 114.9 | **104.6** |
+
+Permutation importance says last-year production dominates (as it should),
+with real contributions from transfer status, vacated share, class year, and
+recruit rating. The HC play-calling features contribute ~nothing at the
+player level. Known gaps: coordinator (OC) histories would need scraping an
+external source; per-player games played (injury detection) isn't in the CFBD
+season endpoint; strength of schedule. Any addition must beat these numbers
+in `backtest.py` to ship.
