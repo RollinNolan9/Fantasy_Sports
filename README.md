@@ -37,9 +37,14 @@ players who decide leagues), and the final projection blends in 25% of last
 season's raw rate to spread the top of the board. A second gradient-boosting
 model predicts expected games played from the same features and gates the
 projection (sqrt(games/9), capped at 1): backups stuck behind entrenched
-starters get priced as backups, while full-time roles pass through
-untouched -- role risk is priced, injury risk still isn't. Features
-(`features.py`), all knowable preseason:
+starters get priced as backups, while full-time roles pass through untouched
+-- role risk is priced, injury risk still isn't. The gate audits clean:
+arriving transfer starters average a 0.96 role factor, entrenched returners
+1.00; only genuinely unsettled rooms get discounted. The `role` column in the
+output shows each player's factor, and `overrides.csv` (name,role) lets you
+override it when you know a depth chart outcome the preseason data can't see
+(e.g. `Deuce Knight,0.1` for a confirmed backup, `Some Riser,1` for a
+camp-battle winner). Features (`features.py`), all knowable preseason:
 
 - production history: fantasy pts/team-game in each of the last 3 seasons,
   plus last season's games played and pts per game played

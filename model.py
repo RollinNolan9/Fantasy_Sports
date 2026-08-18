@@ -62,14 +62,24 @@ def predict_year(target):
     last_rate = (pts * ((12 + RATE_SHRINK) / 12) / (gp + RATE_SHRINK)).dropna() * GAMES
     lr = last_rate.reindex(te.index)
     lr = lr.where(te["from_fcs"] == 0)  # raw FCS rates don't translate; ML only
+    te["role"] = role.round(2)
+    # human depth-chart knowledge beats preseason data: overrides.csv
+    # (name,role) replaces the predicted role factor, e.g. "Deuce Knight,0.1"
+    # for a confirmed backup or "Some Riser,1" for a camp-battle winner
+    try:
+        ov = pd.read_csv("overrides.csv")
+        te["role"] = te["name"].map(dict(zip(ov["name"], ov["role"]))).fillna(te["role"])
+    except FileNotFoundError:
+        pass
     te["proj_points"] = ((BLEND * lr + (1 - BLEND) * ml).where(lr.notna(), ml)
-                         * role).round(1)
+                         * te["role"]).round(1)
     te = te.reset_index().sort_values("proj_points", ascending=False)
     te["rank"] = range(1, len(te) + 1)
     te["pos_rank"] = (te["position"]
                       + te.groupby("position")["proj_points"]
                           .rank(ascending=False, method="first").astype(int).astype(str))
-    return te[["rank", "pos_rank", "playerId", "name", "position", "team", "proj_points"]]
+    return te[["rank", "pos_rank", "playerId", "name", "position", "team",
+               "role", "proj_points"]]
 
 
 if __name__ == "__main__":
