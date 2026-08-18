@@ -42,8 +42,12 @@ def predict_year(target):
     last_rate = (pts / games_played(target - 1).reindex(pts.index)).dropna() * GAMES
     lr = last_rate.reindex(te.index)
     te["proj_points"] = (BLEND * lr + (1 - BLEND) * ml).where(lr.notna(), ml).round(1)
-    return (te.reset_index().sort_values("proj_points", ascending=False)
-            [["playerId", "name", "position", "team", "proj_points"]])
+    te = te.reset_index().sort_values("proj_points", ascending=False)
+    te["rank"] = range(1, len(te) + 1)
+    te["pos_rank"] = (te["position"]
+                      + te.groupby("position")["proj_points"]
+                          .rank(ascending=False, method="first").astype(int).astype(str))
+    return te[["rank", "pos_rank", "playerId", "name", "position", "team", "proj_points"]]
 
 
 if __name__ == "__main__":
