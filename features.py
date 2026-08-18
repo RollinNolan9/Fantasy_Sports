@@ -153,6 +153,15 @@ def build_features(year):
     df["transferred"] = ((df["played_1"] == 1) & (team_1 != df["team"])).astype(int)
     old_off = sp.reindex(team_1).fillna(sp.min()).values  # missing old team ~ FCS-level
     df["transfer_off_delta"] = (df["sp_off_1"] - old_off) * df["transferred"]
+    # coach-follow transfers: new team's new HC is the player's old HC, so the
+    # new team's last-season offense rating says nothing about what he's joining
+    prev_hc = {t: head_coach(t, year - 1) for t in df["team"].unique()}
+    now_hc = {t: head_coach(t, year) for t in df["team"].unique()}
+    old_hc = team_1.map(lambda t: head_coach(t, year - 1) if pd.notna(t) else None)
+    df["followed_hc"] = ((df["transferred"] == 1)
+                         & (df["team"].map(now_hc) == old_hc)
+                         & (df["team"].map(now_hc) != df["team"].map(prev_hc))).astype(int)
+    df.loc[df["followed_hc"] == 1, "transfer_off_delta"] = 0.0
 
     # recruit pedigree (0 for walk-ons / unrated)
     by_athlete, by_recruit = recruit_map(year)

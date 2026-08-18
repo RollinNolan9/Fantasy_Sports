@@ -35,7 +35,9 @@ knowable preseason:
   departed (roster diff), the player's returning depth rank, prior usage share
 - progression: class year, 247-composite recruit rating/stars
 - transfers: placed on their new team, with an SP+ offense quality delta
-  between old and new school
+  between old and new school; coach-follow transfers (new team's new HC is
+  the player's old HC) are flagged and exempt from that delta, since the
+  new team's last-season offense rating isn't the offense they're joining
 - coaching: HC change flag + how the new HC's historical pace/pass-rate
   profile differs from the team's (HC only -- CFBD has no coordinator data)
 - team context: pace, pass rate, SP+ offensive rating
@@ -50,8 +52,8 @@ projections of 0, so covering breakouts is rewarded.
 
 | metric | naive "repeat last year" | heuristic | ML model |
 |---|---|---|---|
-| Spearman rank corr | 0.183 | 0.196 | **0.218** |
-| MAE (points) | 106.3 | 114.9 | **104.6** |
+| Spearman rank corr | 0.183 | 0.196 | **0.214** |
+| MAE (points) | 106.3 | 114.9 | **105.0** |
 
 Permutation importance says last-year production dominates (as it should),
 with real contributions from transfer status, vacated share, class year, and

@@ -20,7 +20,7 @@ FEATURES = [
     "class_year", "recruit_rating", "recruit_stars",
     "plays_pg_1", "pass_rate_1",
     "hc_change", "hc_plays_delta", "hc_passrate_delta",
-    "sp_off_1", "transferred", "transfer_off_delta",
+    "sp_off_1", "transferred", "transfer_off_delta", "followed_hc",
 ] + [f"pos_{p}" for p in POSITIONS]
 
 
