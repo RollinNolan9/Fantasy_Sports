@@ -1,10 +1,6 @@
-"""Gradient-boosted projections from role/coaching/context features.
+"""v2 season-long CFB fantasy projections.
 
-Trains on post-COVID seasons before the target and predicts fantasy points
-per game PLAYED (x12) for everyone on the target year's roster, including
-freshmen and transfers. Projections are health-conditional: they assume the
-player is on the field, since injuries can't be predicted preseason.
-Usage: python3 model.py <target_year>
+python3 model.py [year]  ->  projections_{year}.csv
 """
 import sys
 import warnings
@@ -12,32 +8,50 @@ import warnings
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 
-# numpy quantile binning over intentionally-NaN features (e.g. rate_1 for
-# players who never played) emits a harmless warning
 warnings.filterwarnings("ignore", message="invalid value encountered in subtract")
 
 from features import RATE_SHRINK, build_features, games_played
 from projections import GAMES, POSITIONS, season_points
 
-FIRST_FEATURE_YEAR = 2021  # post-COVID only: portal/NIL era is a different game
-ALPHA = 5    # extra training weight per ~5 pts/game: fit the players who matter
-BLEND = 0.25  # weight on last season's raw rate in the final projection
+VERSION = "2"
+FIRST_FEATURE_YEAR = 2021
+ALPHA = 5
+BLEND = 0.25
+FULL_ROLE_GAMES = 9
+
+TEAMS = 18
+SLOTS = {"QB": 1, "RB": 2, "WR": 2}
+FLEX = 3
+FLEX_ELIGIBLE = {"RB", "WR"}
 
 FEATURES = [
     "fppg_1", "fppg_2", "fppg_3", "played_1", "games_1", "rate_1",
     "share_1", "vac_share", "ret_rank", "grp_fppg_1",
     "class_year", "recruit_rating", "recruit_stars",
-    "plays_pg_1", "pass_rate_1",
+    "plays_pg_1", "pass_rate_1", "new_playcaller",
     "hc_change", "hc_plays_delta", "hc_passrate_delta",
     "sp_off_1", "transferred", "transfer_off_delta", "followed_hc", "from_fcs",
     "comp_max_rate", "comp_transfer_fppg", "comp_fresh_rating",
+    "pass_rate_1p", "rush_rate_1p", "rec_rate_1p",
 ] + [f"pos_{p}" for p in POSITIONS]
 
 
-FULL_ROLE_GAMES = 9  # predicted games at which a role counts as full-time
-# replacement-level positional rank for a 12-team league (1QB/2RB/3WR/1TE);
-# draft_value = projected points above this player, the actual draft signal
-REPLACEMENT = {"QB": 12, "RB": 24, "WR": 36, "TE": 12}
+def replacement_points(df):
+    """First player at each position who doesn't start (dedicated slots, then flex)."""
+    leftover = {p: n * TEAMS for p, n in SLOTS.items()}
+    flex_left = FLEX * TEAMS
+    repl = {}
+    for r in df.sort_values("proj_points", ascending=False).itertuples():
+        pos = r.position
+        if leftover.get(pos, 0) > 0:
+            leftover[pos] -= 1
+        elif pos in FLEX_ELIGIBLE and flex_left > 0:
+            flex_left -= 1
+        elif pos not in repl:
+            repl[pos] = r.proj_points
+    for pos, g in df.groupby("position"):
+        repl.setdefault(pos, g["proj_points"].min())
+    return repl
 
 
 def predict_year(target):
@@ -57,9 +71,7 @@ def predict_year(target):
     role = ((pd.Series(gm.predict(te[FEATURES]), index=te.index)
              / FULL_ROLE_GAMES).clip(0, 1)) ** 0.5
     ml = pd.Series(m.predict(te[FEATURES]), index=te.index).clip(lower=0) * GAMES
-    # blend in last season's per-game rate: the ML mean under-spreads the top.
-    # Same 4-game pseudo-count shrinkage as rate_1: exact for a 12-game season,
-    # crushing for mop-up cameos.
+    # blend last season's per-game rate (FCS-sourced rates excluded)
     pts = season_points(target - 1).groupby("playerId")["points"].sum()
     gp = games_played(target - 1).reindex(pts.index)
     last_rate = (pts * ((12 + RATE_SHRINK) / 12) / (gp + RATE_SHRINK)).dropna() * GAMES
@@ -77,8 +89,7 @@ def predict_year(target):
     te["proj_points"] = ((BLEND * lr + (1 - BLEND) * ml).where(lr.notna(), ml)
                          * te["role"]).round(1)
     te = te.reset_index().sort_values("proj_points", ascending=False)
-    repl = {p: g["proj_points"].iloc[REPLACEMENT[p] - 1]
-            for p, g in te.groupby("position")}
+    repl = replacement_points(te)
     te["draft_value"] = (te["proj_points"] - te["position"].map(repl)).round(1)
     te = te.sort_values("draft_value", ascending=False)
     te["rank"] = range(1, len(te) + 1)
@@ -94,4 +105,6 @@ if __name__ == "__main__":
     out = predict_year(year)
     out.to_csv(f"projections_{year}.csv", index=False)
     print(out.head(30).to_string(index=False))
-    print(f"\n{len(out)} players -> projections_{year}.csv")
+    repl = replacement_points(out)
+    print("\nreplacement:", {p: round(repl[p], 1) for p in POSITIONS})
+    print(f"v{VERSION}  {len(out)} players -> projections_{year}.csv")
