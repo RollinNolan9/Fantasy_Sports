@@ -45,10 +45,13 @@ output shows each player's factor, and `overrides.csv` (name,role) lets you
 override it when you know a depth chart outcome the preseason data can't see
 (e.g. `Deuce Knight,0.1` for a confirmed backup, `Some Riser,1` for a
 camp-battle winner). The output is ranked by `draft_value` -- projected
-points above the positional replacement level (QB12/RB24/WR36/TE12 for a
-12-team league, edit `REPLACEMENT` in `model.py`) -- because raw points
-across positions is the wrong draft signal: QBs outscore WRs in this format,
-but an elite WR's edge over the WR you'd otherwise start is what wins drafts.
+points above replacement, computed from the league's actual lineup
+(18 teams, 1QB/2RB/2WR/3 FLEX; edit `TEAMS`/`SLOTS`/`FLEX` in `model.py`).
+Dedicated slots fill first, then remaining RB/WR/TE compete for flex, so
+replacement is data-dependent (how many RBs vs WRs crack the flex). K and
+D/ST aren't projected yet. Raw points across positions is the wrong draft
+signal: QBs outscore WRs in this format, but an elite WR's edge over the
+WR you'd otherwise start is what wins drafts.
 Features (`features.py`), all knowable preseason:
 
 - production history: fantasy pts/team-game in each of the last 3 seasons,

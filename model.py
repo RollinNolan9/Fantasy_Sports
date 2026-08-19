@@ -35,9 +35,35 @@ FEATURES = [
 
 
 FULL_ROLE_GAMES = 9  # predicted games at which a role counts as full-time
-# replacement-level positional rank for an 18-team league (1QB/2RB/3WR/1TE);
-# draft_value = projected points above this player, the actual draft signal
-REPLACEMENT = {"QB": 18, "RB": 36, "WR": 54, "TE": 18}
+# 18-team league: 1QB / 2RB / 2WR / 3 FLEX (RB/WR/TE) / 1K / 1DST.
+# K and DST aren't projected yet -- they don't change skill-position VORP.
+TEAMS = 18
+SLOTS = {"QB": 1, "RB": 2, "WR": 2}  # dedicated starters per team; TE has none
+FLEX = 3
+FLEX_ELIGIBLE = {"RB", "WR", "TE"}
+
+
+def replacement_points(df):
+    """Points of the first player at each position who doesn't start.
+
+    Fill dedicated slots first, then 3 flex spots per team from remaining
+    RB/WR/TE. Replacement is data-dependent (how many RBs vs WRs crack flex).
+    """
+    leftover = {p: n * TEAMS for p, n in SLOTS.items()}
+    leftover.setdefault("TE", 0)
+    flex_left = FLEX * TEAMS
+    repl = {}
+    for r in df.sort_values("proj_points", ascending=False).itertuples():
+        pos = r.position
+        if leftover.get(pos, 0) > 0:
+            leftover[pos] -= 1
+        elif pos in FLEX_ELIGIBLE and flex_left > 0:
+            flex_left -= 1
+        elif pos not in repl:
+            repl[pos] = r.proj_points
+    for pos, g in df.groupby("position"):
+        repl.setdefault(pos, g["proj_points"].min())
+    return repl
 
 
 def predict_year(target):
@@ -77,8 +103,7 @@ def predict_year(target):
     te["proj_points"] = ((BLEND * lr + (1 - BLEND) * ml).where(lr.notna(), ml)
                          * te["role"]).round(1)
     te = te.reset_index().sort_values("proj_points", ascending=False)
-    repl = {p: g["proj_points"].iloc[REPLACEMENT[p] - 1]
-            for p, g in te.groupby("position")}
+    repl = replacement_points(te)
     te["draft_value"] = (te["proj_points"] - te["position"].map(repl)).round(1)
     te = te.sort_values("draft_value", ascending=False)
     te["rank"] = range(1, len(te) + 1)
@@ -94,4 +119,6 @@ if __name__ == "__main__":
     out = predict_year(year)
     out.to_csv(f"projections_{year}.csv", index=False)
     print(out.head(30).to_string(index=False))
+    repl = replacement_points(out)
+    print("\nreplacement:", {p: round(repl[p], 1) for p in POSITIONS})
     print(f"\n{len(out)} players -> projections_{year}.csv")
