@@ -35,12 +35,12 @@ FEATURES = [
 
 
 FULL_ROLE_GAMES = 9  # predicted games at which a role counts as full-time
-# 18-team league: 1QB / 2RB / 2WR / 3 FLEX (RB/WR/TE) / 1K / 1DST.
-# K and DST aren't projected yet -- they don't change skill-position VORP.
+# 18-team league: 1QB / 2RB / 2WR / 3 FLEX (RB/WR, no TE) / 1K / 1DST.
+# Not superflex. TEs aren't required and can't be started. K/DST not projected.
 TEAMS = 18
-SLOTS = {"QB": 1, "RB": 2, "WR": 2}  # dedicated starters per team; TE has none
+SLOTS = {"QB": 1, "RB": 2, "WR": 2}
 FLEX = 3
-FLEX_ELIGIBLE = {"RB", "WR", "TE"}
+FLEX_ELIGIBLE = {"RB", "WR"}
 
 
 def replacement_points(df):
@@ -50,7 +50,6 @@ def replacement_points(df):
     RB/WR/TE. Replacement is data-dependent (how many RBs vs WRs crack flex).
     """
     leftover = {p: n * TEAMS for p, n in SLOTS.items()}
-    leftover.setdefault("TE", 0)
     flex_left = FLEX * TEAMS
     repl = {}
     for r in df.sort_values("proj_points", ascending=False).itertuples():
