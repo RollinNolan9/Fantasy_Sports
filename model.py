@@ -111,7 +111,12 @@ def predict_year(target):
     te["pos_rank"] = (te["position"]
                       + te.groupby("position")["proj_points"]
                           .rank(ascending=False, method="first").astype(int).astype(str))
-    return te[["rank", "pos_rank", "playerId", "name", "position", "team",
+    try:
+        abbr = pd.read_csv("data/team_abbr.csv").drop_duplicates("team").set_index("team")["abbr"]
+        te["team"] = te["team"].map(abbr).fillna(te["team"])
+    except FileNotFoundError:
+        pass
+    return te[["name", "team", "rank", "pos_rank", "playerId", "position",
                "role", "proj_points", "draft_value"]]
 
 
