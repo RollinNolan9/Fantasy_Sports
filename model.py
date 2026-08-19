@@ -1,10 +1,6 @@
-"""Gradient-boosted projections from role/coaching/context features.
+"""v2 season-long CFB fantasy projections.
 
-Trains on post-COVID seasons before the target and predicts fantasy points
-per game PLAYED (x12) for everyone on the target year's roster, including
-freshmen and transfers. Projections are health-conditional: they assume the
-player is on the field, since injuries can't be predicted preseason.
-Usage: python3 model.py <target_year>
+python3 model.py [year]  ->  projections_{year}.csv
 """
 import sys
 import warnings
@@ -12,16 +8,21 @@ import warnings
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 
-# numpy quantile binning over intentionally-NaN features (e.g. rate_1 for
-# players who never played) emits a harmless warning
 warnings.filterwarnings("ignore", message="invalid value encountered in subtract")
 
 from features import RATE_SHRINK, build_features, games_played
 from projections import GAMES, POSITIONS, season_points
 
-FIRST_FEATURE_YEAR = 2021  # post-COVID only: portal/NIL era is a different game
-ALPHA = 5    # extra training weight per ~5 pts/game: fit the players who matter
-BLEND = 0.25  # weight on last season's raw rate in the final projection
+VERSION = "2"
+FIRST_FEATURE_YEAR = 2021
+ALPHA = 5
+BLEND = 0.25
+FULL_ROLE_GAMES = 9
+
+TEAMS = 18
+SLOTS = {"QB": 1, "RB": 2, "WR": 2}
+FLEX = 3
+FLEX_ELIGIBLE = {"RB", "WR"}
 
 FEATURES = [
     "fppg_1", "fppg_2", "fppg_3", "played_1", "games_1", "rate_1",
@@ -35,21 +36,8 @@ FEATURES = [
 ] + [f"pos_{p}" for p in POSITIONS]
 
 
-FULL_ROLE_GAMES = 9  # predicted games at which a role counts as full-time
-# 18-team league: 1QB / 2RB / 2WR / 3 FLEX (RB/WR, no TE) / 1K / 1DST.
-# Not superflex. TEs aren't required and can't be started. K/DST not projected.
-TEAMS = 18
-SLOTS = {"QB": 1, "RB": 2, "WR": 2}
-FLEX = 3
-FLEX_ELIGIBLE = {"RB", "WR"}
-
-
 def replacement_points(df):
-    """Points of the first player at each position who doesn't start.
-
-    Fill dedicated slots first, then 3 flex spots per team from remaining
-    RB/WR/TE. Replacement is data-dependent (how many RBs vs WRs crack flex).
-    """
+    """First player at each position who doesn't start (dedicated slots, then flex)."""
     leftover = {p: n * TEAMS for p, n in SLOTS.items()}
     flex_left = FLEX * TEAMS
     repl = {}
@@ -83,9 +71,7 @@ def predict_year(target):
     role = ((pd.Series(gm.predict(te[FEATURES]), index=te.index)
              / FULL_ROLE_GAMES).clip(0, 1)) ** 0.5
     ml = pd.Series(m.predict(te[FEATURES]), index=te.index).clip(lower=0) * GAMES
-    # blend in last season's per-game rate: the ML mean under-spreads the top.
-    # Same 4-game pseudo-count shrinkage as rate_1: exact for a 12-game season,
-    # crushing for mop-up cameos.
+    # blend last season's per-game rate (FCS-sourced rates excluded)
     pts = season_points(target - 1).groupby("playerId")["points"].sum()
     gp = games_played(target - 1).reindex(pts.index)
     last_rate = (pts * ((12 + RATE_SHRINK) / 12) / (gp + RATE_SHRINK)).dropna() * GAMES
@@ -121,4 +107,4 @@ if __name__ == "__main__":
     print(out.head(30).to_string(index=False))
     repl = replacement_points(out)
     print("\nreplacement:", {p: round(repl[p], 1) for p in POSITIONS})
-    print(f"\n{len(out)} players -> projections_{year}.csv")
+    print(f"v{VERSION}  {len(out)} players -> projections_{year}.csv")
