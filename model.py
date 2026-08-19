@@ -16,7 +16,7 @@ from projections import GAMES, POSITIONS, season_points
 VERSION = "2"
 FIRST_FEATURE_YEAR = 2021
 ALPHA = 5
-BLEND = 0.25
+BLEND = 0.0   # backtest: any last-year stickiness hurt MAE and yield; rho was flat
 FULL_ROLE_GAMES = 9
 
 TEAMS = 18
