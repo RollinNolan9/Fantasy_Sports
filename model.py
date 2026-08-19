@@ -35,9 +35,9 @@ FEATURES = [
 
 
 FULL_ROLE_GAMES = 9  # predicted games at which a role counts as full-time
-# replacement-level positional rank for a 12-team league (1QB/2RB/3WR/1TE);
+# replacement-level positional rank for an 18-team league (1QB/2RB/3WR/1TE);
 # draft_value = projected points above this player, the actual draft signal
-REPLACEMENT = {"QB": 12, "RB": 24, "WR": 36, "TE": 12}
+REPLACEMENT = {"QB": 18, "RB": 36, "WR": 54, "TE": 18}
 
 
 def predict_year(target):
