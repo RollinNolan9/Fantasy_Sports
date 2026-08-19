@@ -36,6 +36,20 @@ FEATURES = [
 ] + [f"pos_{p}" for p in POSITIONS]
 
 
+def cap_rooms(te, copilot=0.70):
+    """RB/QB committee #2 can't price like the lead. WR rooms can support two.
+
+    Leader unchanged. Non-lead RB/QB capped at copilot x the room's top projection.
+    """
+    lead = te.groupby(["team", "position"])["proj_points"].transform("max")
+    cap = lead * copilot
+    is_lead = te["proj_points"] >= lead
+    apply = te["position"].isin(["RB", "QB"]) & ~is_lead
+    te = te.copy()
+    te.loc[apply, "proj_points"] = te.loc[apply, "proj_points"].clip(upper=cap[apply]).round(1)
+    return te
+
+
 def replacement_points(df):
     """First player at each position who doesn't start (dedicated slots, then flex)."""
     leftover = {p: n * TEAMS for p, n in SLOTS.items()}
@@ -88,7 +102,8 @@ def predict_year(target):
         pass
     te["proj_points"] = ((BLEND * lr + (1 - BLEND) * ml).where(lr.notna(), ml)
                          * te["role"]).round(1)
-    te = te.reset_index().sort_values("proj_points", ascending=False)
+    te = cap_rooms(te.reset_index())
+    te = te.sort_values("proj_points", ascending=False)
     repl = replacement_points(te)
     te["draft_value"] = (te["proj_points"] - te["position"].map(repl)).round(1)
     te = te.sort_values("draft_value", ascending=False)

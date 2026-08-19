@@ -23,15 +23,17 @@ Gradient boosting on post-COVID regular-season data, health-conditional
 above replacement. Last season is an input feature; it is not mixed in again
 after the model (a 0–100% stickiness sweep lost to 0% on MAE and yield).
 New college playcallers inherit their previous stop's pace/pass rate; SP+
-stays with the current roster.
+stays with the current roster. RB/QB rooms: the #2 is capped at 70% of the
+lead so a committee doesn't mint two first-round backs. (Small backtest
+tax vs uncapped: yield 106.6 vs 107.6.)
 
 ## Backtest (2023-2025)
 
 | metric | naive | heuristic | v2 |
 |---|---|---|---|
-| Spearman | 0.200 | 0.209 | 0.208 |
-| MAE | 91.7 | 110.1 | **69.7** |
-| Yield (own top picks) | 82.9 | 100.0 | **107.6** |
+| Spearman | 0.200 | 0.209 | 0.202 |
+| MAE | 91.7 | 110.1 | **71.1** |
+| Yield (own top picks) | 82.9 | 100.0 | **106.6** |
 
 Yield is the draft metric. Rank correlation did not beat naive; MAE and
 yield did. Playcaller mapping is 2026-only and is not in this table.
