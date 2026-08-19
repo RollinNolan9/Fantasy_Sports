@@ -20,20 +20,23 @@ are the two knobs. Everything else is frozen.
 
 Gradient boosting on post-COVID regular-season data, health-conditional
 (points per game played x 12), gated by predicted role, ranked by points
-above replacement. Last-year rate is blended at 25% except FCS-sourced
-seasons. New college playcallers inherit their previous stop's pace/pass
-rate; SP+ stays with the current roster.
+above replacement. Last season is an input feature; it is not mixed in again
+after the model (a 0–100% stickiness sweep lost to 0% on MAE and yield).
+New college playcallers inherit their previous stop's pace/pass rate; SP+
+stays with the current roster.
 
 ## Backtest (2023-2025)
 
 | metric | naive | heuristic | v2 |
 |---|---|---|---|
-| Spearman | 0.200 | 0.209 | 0.209 |
-| MAE | 91.7 | 110.1 | **72.8** |
-| Yield (own top picks) | 82.9 | 100.0 | **104.0** |
+| Spearman | 0.200 | 0.209 | 0.208 |
+| MAE | 91.7 | 110.1 | **69.7** |
+| Yield (own top picks) | 82.9 | 100.0 | **107.6** |
 
 Yield is the draft metric. Rank correlation did not beat naive; MAE and
 yield did. Playcaller mapping is 2026-only and is not in this table.
+Last-year rate is a model *feature*, not a post-hoc blend: sweeping 0–100%
+stickiness on last season's raw rate, 0% won MAE (69.7) and yield (107.6).
 
 Rejected: momentum, HC-as-scheme, pre-COVID training, shrinking mop-up
 rates (the role gate handles that). Not in v2: K, D/ST, full OC history,
