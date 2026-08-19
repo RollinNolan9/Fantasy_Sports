@@ -15,7 +15,7 @@ echo "CFBD_API_KEY=<your key>" > .env   # free key from collegefootballdata.com
 ```bash
 python3 fetch.py               # download 2014-2026 stats, rosters, recruits,
                                # SP+ ratings, coach history to data/ (cached)
-python3 model.py 2026          # -> projections_2026.csv, ranked by projected points
+python3 model.py 2026          # -> projections_2026.csv, ranked by draft value
 python3 backtest.py            # score all models vs actuals for 2023-2025
 python3 projections.py 2026    # simple heuristic baseline, for comparison
 ```
@@ -44,7 +44,12 @@ arriving transfer starters average a 0.96 role factor, entrenched returners
 output shows each player's factor, and `overrides.csv` (name,role) lets you
 override it when you know a depth chart outcome the preseason data can't see
 (e.g. `Deuce Knight,0.1` for a confirmed backup, `Some Riser,1` for a
-camp-battle winner). Features (`features.py`), all knowable preseason:
+camp-battle winner). The output is ranked by `draft_value` -- projected
+points above the positional replacement level (QB12/RB24/WR36/TE12 for a
+12-team league, edit `REPLACEMENT` in `model.py`) -- because raw points
+across positions is the wrong draft signal: QBs outscore WRs in this format,
+but an elite WR's edge over the WR you'd otherwise start is what wins drafts.
+Features (`features.py`), all knowable preseason:
 
 - production history: fantasy pts/team-game in each of the last 3 seasons,
   plus last season's games played and pts per game played

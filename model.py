@@ -35,6 +35,9 @@ FEATURES = [
 
 
 FULL_ROLE_GAMES = 9  # predicted games at which a role counts as full-time
+# replacement-level positional rank for a 12-team league (1QB/2RB/3WR/1TE);
+# draft_value = projected points above this player, the actual draft signal
+REPLACEMENT = {"QB": 12, "RB": 24, "WR": 36, "TE": 12}
 
 
 def predict_year(target):
@@ -74,12 +77,16 @@ def predict_year(target):
     te["proj_points"] = ((BLEND * lr + (1 - BLEND) * ml).where(lr.notna(), ml)
                          * te["role"]).round(1)
     te = te.reset_index().sort_values("proj_points", ascending=False)
+    repl = {p: g["proj_points"].iloc[REPLACEMENT[p] - 1]
+            for p, g in te.groupby("position")}
+    te["draft_value"] = (te["proj_points"] - te["position"].map(repl)).round(1)
+    te = te.sort_values("draft_value", ascending=False)
     te["rank"] = range(1, len(te) + 1)
     te["pos_rank"] = (te["position"]
                       + te.groupby("position")["proj_points"]
                           .rank(ascending=False, method="first").astype(int).astype(str))
     return te[["rank", "pos_rank", "playerId", "name", "position", "team",
-               "role", "proj_points"]]
+               "role", "proj_points", "draft_value"]]
 
 
 if __name__ == "__main__":
