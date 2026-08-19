@@ -54,12 +54,13 @@ WR you'd otherwise start is what wins drafts.
 Features (`features.py`), all knowable preseason:
 
 - production history: fantasy pts/team-game in each of the last 3 seasons,
-  plus last season's games played and pts per game played
+  plus last season's games played, total rate, and passing/rushing/receiving
+  rates separately (option QBs and committee backs aren't one number)
 - role opportunity: share of the team's position-group production that
   departed (roster diff), the player's returning depth rank, prior usage share
 - incoming competition at the position: best competing returner's per-game
-  rate, production transferring in, best unproven blue-chip in the room --
-  a secure workhorse differs from a forming committee
+  rate (only counting players with 6+ games -- mop-up flashes aren't a
+  depth-chart battle), production transferring in, best unproven blue-chip
 - progression: class year, 247-composite recruit rating/stars
 - transfers: placed on their new team, with an SP+ offense quality delta
   between old and new school; coach-follow transfers (new team's new HC is
@@ -68,7 +69,12 @@ Features (`features.py`), all knowable preseason:
   FCS-sourced production is flagged (`from_fcs`) so the model learns the
   level-of-competition discount, and it is excluded from the rate blend
 - coaching: HC change flag + how the new HC's historical pace/pass-rate
-  profile differs from the team's (HC only -- CFBD has no coordinator data)
+  profile differs from the team's (HC seasons under 8 games ignored --
+  interims aren't an offense). When a new offensive playcaller is known,
+  the previous college stop's pace and pass rate replace last year's team
+  values (`playcallers.csv`: year,team,source_team). Talent (SP+) stays
+  with the current roster; scheme travels with the playcaller. NFL-sourced
+  coordinators have no college pace to transplant.
 - team context: pace, pass rate, SP+ offensive rating
 
 `projections.py` keeps the simple heuristic (3-yr weighted average regressed
@@ -86,9 +92,9 @@ positives like projecting starter numbers for a benched backup.
 
 | metric | naive "repeat last year's rate" | heuristic | ML model |
 |---|---|---|---|
-| Spearman rank corr | 0.200 | 0.209 | **0.215** |
-| MAE (points) | 91.7 | 110.1 | **72.9** |
-| Yield of own top picks (pts) | 82.9 | 100.0 | **101.8** |
+| Spearman rank corr | 0.200 | 0.209 | **0.209** |
+| MAE (points) | 91.7 | 110.1 | **72.8** |
+| Yield of own top picks (pts) | 82.9 | 100.0 | **104.0** |
 
 Permutation importance says last-year production dominates (as it should),
 with real contributions from transfer status, vacated share, class year, and

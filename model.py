@@ -27,10 +27,11 @@ FEATURES = [
     "fppg_1", "fppg_2", "fppg_3", "played_1", "games_1", "rate_1",
     "share_1", "vac_share", "ret_rank", "grp_fppg_1",
     "class_year", "recruit_rating", "recruit_stars",
-    "plays_pg_1", "pass_rate_1",
+    "plays_pg_1", "pass_rate_1", "new_playcaller",
     "hc_change", "hc_plays_delta", "hc_passrate_delta",
     "sp_off_1", "transferred", "transfer_off_delta", "followed_hc", "from_fcs",
     "comp_max_rate", "comp_transfer_fppg", "comp_fresh_rating",
+    "pass_rate_1p", "rush_rate_1p", "rec_rate_1p",
 ] + [f"pos_{p}" for p in POSITIONS]
 
 

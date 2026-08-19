@@ -12,7 +12,7 @@ from functools import lru_cache
 
 import pandas as pd
 
-from projections import POSITIONS, season_points
+from projections import POSITIONS, SCORING, season_points
 
 FIRST_DATA_YEAR = 2014
 # pseudo-count games: rate = pts * (12+k)/12 / (games+k). 0 = raw rate (NaN if
@@ -51,9 +51,13 @@ def head_coach(team, year):
 
 
 def hc_profile(coach, year):
-    """Mean pace and pass rate over the coach's last 3 HC seasons before `year`."""
+    """Mean pace and pass rate over the coach's last 3 full HC seasons before `year`.
+
+    Seasons with <8 games (interims) are ignored -- a 3-game cameo is not an offense.
+    """
     c = coach_seasons()
-    rows = c[(c["coach"] == coach) & (c["year"] < year)].nlargest(3, "year")
+    rows = (c[(c["coach"] == coach) & (c["year"] < year) & (c["games"] >= 8)]
+            .nlargest(3, "year"))
     vals = []
     for r in rows.itertuples():
         try:
@@ -87,6 +91,26 @@ def recruit_map(max_year):
                 by_athlete[r.athleteId] = val
             by_recruit[str(r.id)] = val
     return by_athlete, by_recruit
+
+
+@lru_cache(maxsize=None)
+def points_by_category(year):
+    """Fantasy points by (playerId, category) for passing/rushing/receiving."""
+    df = pd.read_csv(f"data/players_{year}.csv", dtype={"playerId": str})
+    df = df[df["position"].isin(POSITIONS)].copy()
+    stat = pd.to_numeric(df["stat"], errors="coerce").fillna(0)
+    df["points"] = stat * [SCORING.get(k, 0.0) for k in zip(df["category"], df["statType"])]
+    return df.groupby(["playerId", "category"])["points"].sum().unstack(fill_value=0)
+
+
+def playcaller_map(year):
+    """team -> source_team for new offensive playcallers (college OC last stop)."""
+    try:
+        pc = pd.read_csv("playcallers.csv")
+    except FileNotFoundError:
+        return {}
+    sub = pc[pc["year"] == year]
+    return dict(zip(sub["team"], sub["source_team"]))
 
 
 def _hc_features(teams, year):
@@ -131,8 +155,16 @@ def build_features(year):
     # "the best rate in the room"; rescaled so a full 12-game season is exact.
     gp1 = games_played(year - 1).reindex(df.index).fillna(0)
     df["games_1"] = gp1
-    df["rate_1"] = (hist[1]["points"].reindex(df.index).fillna(0)
-                    * ((12 + RATE_SHRINK) / 12) / (gp1 + RATE_SHRINK))
+    denom = (gp1 + RATE_SHRINK).replace(0, float("nan"))
+    df["rate_1"] = pd.to_numeric(
+        hist[1]["points"].reindex(df.index).fillna(0)
+        * ((12 + RATE_SHRINK) / 12) / denom, errors="coerce")
+
+    cats = points_by_category(year - 1)
+    for src, col in (("passing", "pass_rate_1p"), ("rushing", "rush_rate_1p"),
+                     ("receiving", "rec_rate_1p")):
+        pts = cats[src] if src in cats.columns else pd.Series(dtype=float)
+        df[col] = (pts.reindex(df.index).fillna(0) / denom).fillna(0)
 
     # position: prefer stats-derived (most recent), fall back to roster listing
     pos = hist[1]["position"].reindex(df.index)
@@ -162,6 +194,14 @@ def build_features(year):
     ts1 = team_stats(year - 1)
     df["plays_pg_1"] = ts1["plays_pg"].reindex(df["team"]).fillna(ts1["plays_pg"].mean()).values
     df["pass_rate_1"] = ts1["pass_rate"].reindex(df["team"]).fillna(ts1["pass_rate"].mean()).values
+    # new OC: transplant the playcaller's previous college team's pace/pass-rate
+    # (not their SP+ -- that's talent, not scheme). NFL-sourced hires have no row.
+    pc = playcaller_map(year)
+    df["new_playcaller"] = df["team"].isin(pc).astype(int)
+    for team, src in pc.items():
+        if src in ts1.index:
+            df.loc[df["team"] == team, "plays_pg_1"] = ts1.loc[src, "plays_pg"]
+            df.loc[df["team"] == team, "pass_rate_1"] = ts1.loc[src, "pass_rate"]
 
     # coaching: HC change + how the new HC's historical profile differs
     hc = _hc_features(tuple(sorted(df["team"].unique())), year)
@@ -205,15 +245,18 @@ def build_features(year):
     # incoming competition at (team, position): the model can already see
     # production leaving a room (vac_share); these see production ARRIVING --
     # a workhorse with no competition differs from a forming committee
+    # competition rates: ignore sub-6-game flashes (mop-up isn't a job battle)
+    cr = df["rate_1"].fillna(0).astype(float).where(df["games_1"] >= 6, 0.0)
+    df["_cr"] = cr
     grp = df.groupby(["team", "position"])
 
     def _second(s):
         return s.nlargest(2).iloc[-1] if len(s) > 1 else 0.0
 
-    # best competitor's per-game rate last season (excluding self)
-    gmax = grp["rate_1"].transform("max")
-    gsec = grp["rate_1"].transform(_second)
-    df["comp_max_rate"] = gsec.where(df["rate_1"] >= gmax, gmax)
+    gmax = grp["_cr"].transform("max")
+    gsec = grp["_cr"].transform(_second)
+    df["comp_max_rate"] = gsec.where(df["_cr"] >= gmax, gmax)
+    df.drop(columns=["_cr"], inplace=True)
     # production transferring INTO the room (excluding own arrival)
     arriving = df["fppg_1"] * ((team_1 != df["team"]) & (df["played_1"] == 1))
     df["comp_transfer_fppg"] = arriving.groupby(
