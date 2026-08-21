@@ -42,14 +42,17 @@ def replacement_points(df):
 def load_lines(path):
     peek = pd.read_csv(path, nrows=1)
     if "Market" in peek.columns and "Player" in peek.columns:
-        from nfl_dk import parse_offering
+        from nfl_dk import overlay_vegas, parse_offering
         from nfl_hist import expected_from_hist, fill_from_hist, load_hist
-        _, wide = parse_offering(path)
+        _, wide, dirty = parse_offering(path)
+        wide = overlay_vegas(wide, dirty)
+        n_vegas = int((wide.get("line_source", "") == "vegas").sum())
         hist = load_hist()
         filled = fill_from_hist(wide, expected_from_hist(hist))
         n_dk = int((filled.get("n_dk", 0) > 0).sum())
         n_hist = int((filled.get("line_source", "") == "hist").sum())
-        print(f"DK: {n_dk} players with markets; hist MC fill: {n_hist} others")
+        print(f"DK: {n_dk} clean markets; Vegas fallback: {n_vegas} "
+              f"(dup/error); hist MC: {n_hist} others")
         df = filled
     else:
         df = pd.read_csv(path)
@@ -110,7 +113,8 @@ def run(lines_path=DEFAULT_LINES, n_sims=4000, use_espn=True):
             dropped = before - len(board)
             if dropped:
                 print(f"Dropped {dropped} hist-only players with no 2026 team")
-            print(f"ESPN ADP matched {board['adp'].notna().sum()} / {len(board)} players")
+            print(f"ESPN room ADP attached for {board['adp'].notna().sum()} "
+                  f"players (not used in rank)")
         except Exception as e:
             print(f"ESPN ADP skipped: {e}", file=sys.stderr)
             board["team"] = board.get("team", pd.Series("", index=board.index))
@@ -181,13 +185,6 @@ def main():
     print(out.head(40).to_string(index=False))
     print("\nreplacement:", {p: round(float(v), 1) for p, v in repl.items()})
     print(f"\n{len(out)} players -> {OUT}")
-    steals = (out.dropna(subset=["adp_gap"])
-              .query("adp_gap >= 12 and rank <= 120 and draft_value >= 8 "
-                     "and position in ['QB','RB','WR','TE']"))
-    if len(steals):
-        print("\nADP steals (we rank 12+ spots earlier than ESPN ADP, VORP >= 8):")
-        print(steals[["rank", "pos_rank", "name", "team", "proj_points",
-                      "draft_value", "adp", "adp_gap"]].head(20).to_string(index=False))
 
 
 if __name__ == "__main__":

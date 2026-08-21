@@ -3,7 +3,7 @@ import unittest
 
 import pandas as pd
 
-from nfl_dk import parse_current_line, parse_offering
+from nfl_dk import overlay_vegas, parse_current_line, parse_offering
 from nfl_hist import fill_from_hist
 from nfl_lines import american_to_prob, expected_from_ou, fair_over_prob
 from nfl_scoring import complete_stats, skill_points
@@ -115,7 +115,7 @@ class Offering(unittest.TestCase):
                                             open_o=-110, open_u=-110))
 
     def test_real_offering_locks_gibbs(self):
-        _, wide = parse_offering("nfl/dk_offering.csv")
+        _, wide, _ = parse_offering("nfl/dk_offering.csv")
         g = wide[wide.name.eq("Jahmyr Gibbs")].iloc[0]
         self.assertAlmostEqual(g.rush_yds, 1199.5, places=1)
 
@@ -136,17 +136,21 @@ class Offering(unittest.TestCase):
         # TDs scaled toward the 1199.5 / 800 workload
         self.assertGreater(row.rush_td, 8)
 
-    def test_bowers_once_as_te(self):
-        _, wide = parse_offering("nfl/dk_offering.csv")
-        b = wide[wide.name.eq("Brock Bowers")]
-        self.assertEqual(len(b), 1)
-        self.assertEqual(b.iloc[0].position, "TE")
-        self.assertAlmostEqual(b.iloc[0].rec_yds, 924.5, places=1)
-        self.assertGreater(b.iloc[0].rec_td, 6)
-
-    def test_diggs_ticket_rows_skipped(self):
-        _, wide = parse_offering("nfl/dk_offering.csv")
+    def test_dup_or_error_falls_back_to_vegas(self):
+        _, wide, dirty = parse_offering("nfl/dk_offering.csv")
+        self.assertIn("Brock Bowers", dirty)
+        self.assertIn("Stefon Diggs", dirty)
+        self.assertTrue(wide[wide.name.eq("Brock Bowers")].empty)
         self.assertTrue(wide[wide.name.eq("Stefon Diggs")].empty)
+        out = overlay_vegas(wide, dirty)
+        b = out[out.name.eq("Brock Bowers")].iloc[0]
+        self.assertEqual(b.position, "TE")
+        self.assertAlmostEqual(b.rec_yds, 924.5, places=1)
+        self.assertAlmostEqual(b.rec_td, 7.5, places=1)
+        self.assertEqual(b.line_source, "vegas")
+        d = out[out.name.eq("Stefon Diggs")].iloc[0]
+        self.assertAlmostEqual(d.rec_yds, 774.5, places=1)
+        self.assertLess(d.rush_yds if pd.notna(d.rush_yds) else 0, 50)
 
     def test_unsigned_hist_dropped(self):
         board = pd.DataFrame([

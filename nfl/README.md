@@ -26,23 +26,24 @@ in a 10-team draft. Josh Allen can be QB1 and still go in the late 2nd.
 1. **Lines** — your DraftKings offering workbook (`nfl/dk_offering.csv`)
    is the source of truth. Balanced O/Us are de-vigged (`nfl_lines.py`)
    so a -120 / +100 over sits a bit above the printed number. Milestones
-   and IDP sacks are ignored.
+   and IDP sacks are ignored. Duplicate names (Bowers WR/TE, two teams) or
+   error rows (`10+` ticket ids) fall back to the previous Vegas snapshot
+   (`nfl/vegas_2026.csv`) instead of merging junk.
 2. **Everyone else** — players (and missing stats) with no DK ticket are
    filled by a 2k-draw Monte Carlo of 2024+2025 regular-season rates
    (`nfl_hist.py`). 2025 is weighted 65%. Companion TDs/receptions are
    scaled to any DK yardage so Gibbs's 1199.5 rush line is not sitting on
-   last year's TD count. Hist-only names with no 2026 ESPN team (unsigned /
-   retired) are dropped. `line_source` is `dk+hist` or `hist`.
+   last year's TD count. Hist-only names with no 2026 team are dropped.
+   `line_source` is `dk+hist`, `vegas`, or `hist`.
 3. **Score** — ESPN PPR: 0.04 pass yd, 4 pass TD, -2 INT, 0.1 rush/rec yd,
    6 rush/rec TD, 1 PPR, -2 fumble lost.
 4. **Sim** — 4,000 seasons around those means with a shared team-offense
    shock plus player residual. Rank on the market mean; the sim only
    produces **floor (10th) / ceiling (90th)** so you can take upside in
    the double-digit rounds.
-5. **VORP + ADP** — replacement is the first player at each position who
-   does not start (dedicated slots, then FLEX). ESPN PPR ADP is joined for
-   **adp_gap**: positive means we rank them earlier than the room, i.e. a
-   steal if the board is right.
+5. **VORP** — replacement is the first player at each position who does
+   not start (dedicated slots, then FLEX). ESPN ADP is a sidecar column
+   only (`adp` / `adp_gap`). It does not change rank, position, or stats.
 
 ## How to actually draft with it
 
@@ -50,8 +51,7 @@ in a 10-team draft. Josh Allen can be QB1 and still go in the late 2nd.
   order.
 - In a 10-team PPR, the board will push RB/WR in the first four rounds and
   let QB slide unless a dual-threat is being drafted behind his VORP.
-- `adp_gap >= 12` inside the top 140 is the steal list printed at the end
-  of `nfl.py`. Those are the names to sit on.
+- `adp` is the room, not the model. Ignore it for pick order.
 - `ceil - floor` is volatility. Prefer high ceiling after pick 80.
 - K and DST are streamed. The board ranks them; do not spend a pick before
   the last two rounds.

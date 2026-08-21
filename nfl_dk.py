@@ -1,9 +1,13 @@
 """Parse the DraftKings season-long offering workbook into player stat means."""
 import re
+from pathlib import Path
 
 import pandas as pd
 
+from nfl_fetch import name_key
 from nfl_lines import classify_market, expected_from_ou
+
+VEGAS_PATH = Path("nfl/vegas_2026.csv")
 
 # "1199.5  -110 / -110"  |  "799.5  -120 / 100"  |  "924.5  -110 /"
 LINE_RE = re.compile(
@@ -58,7 +62,9 @@ def parse_offering(path):
     keep = keep[keep["pos"].isin(SKILL_POS)]
 
     recs = []
+    dirty = set()
     for r in keep.to_dict("records"):
+        name = str(r["Player"]).strip()
         stat = classify_market(r.get("Market") or "")
         if not stat:
             continue
@@ -69,10 +75,11 @@ def parse_offering(path):
             r.get("Open U Odds"),
         )
         if not parsed:
+            dirty.add(name)
             continue
         line, over, under = parsed
         recs.append({
-            "name": str(r["Player"]).strip(),
+            "name": name,
             "team": str(r.get("Team") or "").strip(),
             "position": r["pos"],
             "stat": stat,
@@ -84,26 +91,36 @@ def parse_offering(path):
         })
     if not recs:
         raise ValueError(f"no usable balanced O/Us in {path}")
-    long = pd.DataFrame(recs).drop_duplicates(["name", "stat"], keep="last")
-    # DK sometimes lists the same player at two positions (Bowers WR/TE) or
-    # two teams. One row per name; TE beats WR when both appear.
-    pos_rank = {"TE": 0, "WR": 1, "RB": 2, "QB": 3}
-    long["_pr"] = long["position"].map(pos_rank).fillna(9)
-    meta = (
-        long.sort_values("_pr")
-        .groupby("name", as_index=False)
-        .agg(team=("team", "first"), position=("position", "first"))
-    )
-    stats = (
-        long.pivot_table(index="name", columns="stat", values="expected", aggfunc="first")
-        .reset_index()
-    )
-    stats.columns.name = None
-    wide = meta.merge(stats, on="name", how="left")
-    wide = wide.merge(
-        long.groupby("name").size().rename("n_dk"),
-        left_on="name", right_index=True, how="left",
-    )
-    wide["line_source"] = "dk"
-    long = long.drop(columns="_pr")
-    return long, wide
+    long = pd.DataFrame(recs)
+    npos = long.groupby("name")["position"].nunique()
+    nteam = long.groupby("name")["team"].nunique()
+    nstat = long.groupby(["name", "stat"]).size()
+    dirty.update(npos[npos > 1].index)
+    dirty.update(nteam[nteam > 1].index)
+    dirty.update(nstat[nstat > 1].index.get_level_values(0))
+    long = long[~long["name"].isin(dirty)].drop_duplicates(["name", "stat"])
+    if long.empty:
+        wide = pd.DataFrame(columns=["name", "team", "position", "n_dk", "line_source"])
+    else:
+        wide = (long.pivot(index=["name", "team", "position"], columns="stat", values="expected")
+                .reset_index())
+        wide.columns.name = None
+        wide = wide.merge(long.groupby("name").size().rename("n_dk"),
+                          left_on="name", right_index=True, how="left")
+        wide["line_source"] = "dk"
+    return long, wide, dirty
+
+
+def overlay_vegas(dk_wide, dirty, vegas_path=VEGAS_PATH):
+    """Replace duplicate/error DK names with the previous Vegas snapshot."""
+    dirty_keys = {name_key(n) for n in dirty}
+    dk = dk_wide.copy()
+    if "name" in dk.columns and len(dk):
+        dk["_k"] = dk["name"].map(name_key)
+        dk = dk[~dk["_k"].isin(dirty_keys)].drop(columns="_k")
+    vegas = pd.read_csv(vegas_path)
+    vegas["_k"] = vegas["name"].map(name_key)
+    take = vegas[vegas["_k"].isin(dirty_keys)].drop_duplicates("_k")
+    take["line_source"] = "vegas"
+    take["n_dk"] = 0
+    return pd.concat([dk, take.drop(columns="_k")], ignore_index=True, sort=False)

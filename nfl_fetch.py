@@ -175,7 +175,7 @@ def fetch_draftkings(sleep=0.25):
 
 
 def attach_espn(vegas, espn):
-    """Join ESPN ADP by name. ESPN position/team win (fantasy slot, current roster)."""
+    """Sidecar ESPN ADP / injury / team-if-blank. Never overwrites book position."""
     v = vegas.copy()
     v["_key"] = v["name"].map(name_key)
     e = espn.copy()
@@ -184,9 +184,9 @@ def attach_espn(vegas, espn):
         for n, p, t in zip(e["name"], e["position"], e["team"])
     ]
     keep = (e.drop_duplicates("_key")
-            [["_key", "position", "team", "adp", "espn_rank", "espn_proj", "injury"]]
-            .rename(columns={"position": "position_espn", "team": "team_espn"}))
+            [["_key", "team", "adp", "espn_rank", "espn_proj", "injury"]]
+            .rename(columns={"team": "team_espn"}))
     merged = v.merge(keep, on="_key", how="left")
-    merged["position"] = merged["position_espn"].combine_first(merged["position"])
-    merged["team"] = merged["team_espn"].combine_first(merged["team"])
-    return merged.drop(columns=["_key", "position_espn", "team_espn"])
+    blank = merged["team"].fillna("").astype(str).str.strip().eq("")
+    merged.loc[blank, "team"] = merged.loc[blank, "team_espn"]
+    return merged.drop(columns=["_key", "team_espn"])
