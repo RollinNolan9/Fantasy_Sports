@@ -81,10 +81,24 @@ def drop_unsigned_hist(board, espn=None):
     return board.loc[~hist | keys.isin(rostered)].copy()
 
 
+def pick_replacement(repl):
+    """TE11 is a wasteland, so mediocre TEs look like top-40 picks vs that.
+
+    In 10-team 1TE they actually compete with a FLEX RB/WR. Floor TE
+    replacement there so only McBride/Bowers-level TEs stay early.
+    """
+    out = dict(repl)
+    rb, wr = out.get("RB"), out.get("WR")
+    if "TE" in out and rb is not None and wr is not None:
+        out["TE"] = max(out["TE"], min(rb, wr))
+    return out
+
+
 def rank(df):
     df = df.sort_values("proj_points", ascending=False)
     repl = replacement_points(df)
-    df["draft_value"] = (df["proj_points"] - df["position"].map(repl)).round(1)
+    pick = pick_replacement(repl)
+    df["draft_value"] = (df["proj_points"] - df["position"].map(pick)).round(1)
     skill = df["position"].isin(SKILL)
     df = pd.concat([
         df.loc[skill].sort_values(["draft_value", "proj_points"], ascending=False),
@@ -98,7 +112,7 @@ def rank(df):
     )
     if "adp" in df.columns:
         df["adp_gap"] = (pd.to_numeric(df["adp"], errors="coerce") - df["rank"]).round(1)
-    return df, repl
+    return df, pick
 
 
 def run(lines_path=DEFAULT_LINES, n_sims=4000, use_espn=True):

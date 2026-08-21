@@ -80,6 +80,29 @@ class Vorp(unittest.TestCase):
         top_rb = ranked.loc[ranked.position.eq("RB")].iloc[0]
         self.assertGreater(top_rb.draft_value, top_qb.draft_value)
 
+    def test_mid_te_ranks_like_flex_not_vs_te11(self):
+        rows = []
+        for i in range(12):
+            rows.append({"name": f"QB{i}", "position": "QB", "proj_points": 300 - i})
+        for i in range(30):
+            rows.append({"name": f"RB{i}", "position": "RB", "proj_points": 250 - i})
+        for i in range(30):
+            rows.append({"name": f"WR{i}", "position": "WR", "proj_points": 240 - i})
+        rows.append({"name": "Elite TE", "position": "TE", "proj_points": 240})
+        rows.append({"name": "Good TE", "position": "TE", "proj_points": 220})
+        for i in range(12):
+            rows.append({"name": f"TE{i}", "position": "TE", "proj_points": 175 - i})
+        for i in range(12):
+            rows.append({"name": f"K{i}", "position": "K", "proj_points": 100 - i})
+        for i in range(12):
+            rows.append({"name": f"D{i}", "position": "DST", "proj_points": 90 - i})
+        ranked, _ = rank(pd.DataFrame(rows).assign(floor=0, ceil=0))
+        tes_in_70 = ranked.query("rank <= 70 and position == 'TE'")
+        self.assertLessEqual(len(tes_in_70), 3)
+        self.assertEqual(ranked.loc[ranked.name.eq("Elite TE")].iloc[0].pos_rank, "TE1")
+        mid = ranked.loc[ranked.name.eq("TE0")].iloc[0]
+        self.assertGreater(mid["rank"], 40)
+
 
 class Sim(unittest.TestCase):
     def test_mean_tracks_deterministic(self):

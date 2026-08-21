@@ -42,8 +42,9 @@ in a 10-team draft. Josh Allen can be QB1 and still go in the late 2nd.
    produces **floor (10th) / ceiling (90th)** so you can take upside in
    the double-digit rounds.
 5. **VORP** — replacement is the first player at each position who does
-   not start (dedicated slots, then FLEX). ESPN ADP is a sidecar column
-   only (`adp` / `adp_gap`). It does not change rank, position, or stats.
+   not start (dedicated slots, then FLEX). TEs are then floored against a
+   FLEX RB/WR so TE11 being terrible does not stuff nine TEs in the top 70.
+   ESPN ADP is a sidecar column only (`adp` / `adp_gap`).
 
 ## How to actually draft with it
 
