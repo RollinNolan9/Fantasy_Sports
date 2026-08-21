@@ -1,4 +1,15 @@
-# Fantasy_Sports v2
+# Fantasy_Sports
+
+Two draft boards live here:
+
+- **NFL, 10-team ESPN PPR** — sportsbook season-long lines + Monte Carlo +
+  VORP. This is the one for winning the league this year. See
+  [`nfl/README.md`](nfl/README.md) and run `python3 nfl.py`.
+- **CFB Fantrax v2** — ML projections for the 18-team college league (below).
+
+---
+
+# CFB v2
 
 Season-long college football projections for an 18-team Fantrax league:
 1QB / 2RB / 2WR / 3 FLEX (RB/WR). Not superflex. TEs, K, D/ST not started.
