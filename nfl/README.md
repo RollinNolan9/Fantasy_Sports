@@ -23,14 +23,16 @@ in a 10-team draft. Josh Allen can be QB1 and still go in the late 2nd.
 
 ## Pipeline
 
-1. **Lines** — `nfl/vegas_2026.csv` is a 2026 season-long snapshot built
-   from DraftKings-style player props (yards, TDs, receptions, INTs). Live
-   DK is `--fetch-dk` when their sportsbook is reachable. Juice is removed
-   (`nfl_lines.py`) so a -120 / +100 over sits a bit above the printed number.
-2. **Missing stats** — if a book lists receiving yards but not receptions,
-   fill recs from position yards-per-catch. QBs without an INT total get
-   ~2.3% of pass attempts. Season-long lines already price missed games;
-   we do not haircut them again.
+1. **Lines** — your DraftKings offering workbook (`nfl/dk_offering.csv`)
+   is the source of truth. Balanced O/Us are de-vigged (`nfl_lines.py`)
+   so a -120 / +100 over sits a bit above the printed number. Milestones
+   and IDP sacks are ignored.
+2. **Everyone else** — players (and missing stats) with no DK ticket are
+   filled by a 2k-draw Monte Carlo of 2024+2025 regular-season rates
+   (`nfl_hist.py`). 2025 is weighted 65%. Companion TDs/receptions are
+   scaled to any DK yardage so Gibbs's 1199.5 rush line is not sitting on
+   last year's TD count. Hist-only names with no 2026 ESPN team (unsigned /
+   retired) are dropped. `line_source` is `dk+hist` or `hist`.
 3. **Score** — ESPN PPR: 0.04 pass yd, 4 pass TD, -2 INT, 0.1 rush/rec yd,
    6 rush/rec TD, 1 PPR, -2 fumble lost.
 4. **Sim** — 4,000 seasons around those means with a shared team-offense
@@ -53,21 +55,7 @@ in a 10-team draft. Josh Allen can be QB1 and still go in the late 2nd.
 - `ceil - floor` is volatility. Prefer high ceiling after pick 80.
 - K and DST are streamed. The board ranks them; do not spend a pick before
   the last two rounds.
-- Injuries after the snapshot: delete or zero the row in
-  `nfl/vegas_2026.csv` and rerun. Do not hand-edit projections.
-
-## Refreshing lines
-
-DraftKings' public sportsbook API is IP-blocked from this cloud machine
-(Akamai 403). On your laptop:
-
-```bash
-python3 nfl.py --fetch-dk --lines nfl/dk_lines.csv
-```
-
-If that still 403s, paste season O/Us into `nfl/vegas_2026.csv` (same
-columns) and rerun. The ranking math does not care which book the numbers
-came from as long as they are season-long, two-way markets.
+- Injuries after the snapshot: edit the DK workbook or drop the row and rerun.
 
 ## What this is not
 

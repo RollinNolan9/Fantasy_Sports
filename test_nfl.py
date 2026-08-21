@@ -3,10 +3,12 @@ import unittest
 
 import pandas as pd
 
+from nfl_dk import parse_current_line, parse_offering
+from nfl_hist import fill_from_hist
 from nfl_lines import american_to_prob, expected_from_ou, fair_over_prob
 from nfl_scoring import complete_stats, skill_points
 from nfl_sim import simulate
-from nfl import rank
+from nfl import drop_unsigned_hist, rank
 
 
 class Scoring(unittest.TestCase):
@@ -93,6 +95,77 @@ class Sim(unittest.TestCase):
         self.assertAlmostEqual(out.loc[0, "proj_points"], round(det, 1), places=1)
         self.assertLess(out.loc[0, "floor"], out.loc[0, "proj_points"])
         self.assertGreater(out.loc[0, "ceil"], out.loc[0, "proj_points"])
+
+
+class Offering(unittest.TestCase):
+    def test_parse_juiced_and_partial_odds(self):
+        line, over, under = parse_current_line("799.5  -120 / 100")
+        self.assertEqual(line, 799.5)
+        self.assertEqual(over, -120)
+        self.assertEqual(under, 100)
+        line, over, under = parse_current_line("924.5  -110 /")
+        self.assertEqual((line, over, under), (924.5, -110, -110))
+
+    def test_open_line_fallback(self):
+        parsed = parse_current_line(None, open_line=68.5, open_o=-110, open_u=-110)
+        self.assertEqual(parsed[0], 68.5)
+
+    def test_ticket_id_does_not_use_open_line(self):
+        self.assertIsNone(parse_current_line("10+ 701", open_line=799.5,
+                                            open_o=-110, open_u=-110))
+
+    def test_real_offering_locks_gibbs(self):
+        _, wide = parse_offering("nfl/dk_offering.csv")
+        g = wide[wide.name.eq("Jahmyr Gibbs")].iloc[0]
+        self.assertAlmostEqual(g.rush_yds, 1199.5, places=1)
+
+    def test_hist_does_not_clobber_dk(self):
+        dk = pd.DataFrame([{"name": "Jahmyr Gibbs", "team": "DET", "position": "RB",
+                            "rush_yds": 1199.5, "n_dk": 1, "line_source": "dk"}])
+        hist = pd.DataFrame([{
+            "key": "jahmyr gibbs", "name": "Jahmyr Gibbs", "position": "RB", "team": "DET",
+            "pass_yds": 0, "pass_td": 0, "interceptions": 0,
+            "rush_yds": 800, "rush_td": 8, "rush_att": 200,
+            "receptions": 50, "rec_yds": 400, "rec_td": 3, "fumbles": 1,
+            "pass_att": 0, "pass_cmp": 0,
+        }])
+        out = fill_from_hist(dk, hist)
+        row = out[out.name.eq("Jahmyr Gibbs")].iloc[0]
+        self.assertAlmostEqual(row.rush_yds, 1199.5, places=1)
+        self.assertGreater(row.receptions, 0)
+        # TDs scaled toward the 1199.5 / 800 workload
+        self.assertGreater(row.rush_td, 8)
+
+    def test_bowers_once_as_te(self):
+        _, wide = parse_offering("nfl/dk_offering.csv")
+        b = wide[wide.name.eq("Brock Bowers")]
+        self.assertEqual(len(b), 1)
+        self.assertEqual(b.iloc[0].position, "TE")
+        self.assertAlmostEqual(b.iloc[0].rec_yds, 924.5, places=1)
+        self.assertGreater(b.iloc[0].rec_td, 6)
+
+    def test_diggs_ticket_rows_skipped(self):
+        _, wide = parse_offering("nfl/dk_offering.csv")
+        self.assertTrue(wide[wide.name.eq("Stefon Diggs")].empty)
+
+    def test_unsigned_hist_dropped(self):
+        board = pd.DataFrame([
+            {"name": "Jahmyr Gibbs", "team": "DET", "position": "RB",
+             "line_source": "dk+hist"},
+            {"name": "Joe Mixon", "team": "HOU", "position": "RB",
+             "line_source": "hist"},
+            {"name": "Ghost RB", "team": "", "position": "RB",
+             "line_source": "hist"},
+        ])
+        espn = pd.DataFrame([
+            {"name": "Jahmyr Gibbs", "position": "RB", "team": "DET"},
+            {"name": "Joe Mixon", "position": "RB", "team": ""},
+        ])
+        out = drop_unsigned_hist(board, espn)
+        names = set(out.name)
+        self.assertIn("Jahmyr Gibbs", names)
+        self.assertNotIn("Joe Mixon", names)
+        self.assertNotIn("Ghost RB", names)
 
 
 if __name__ == "__main__":

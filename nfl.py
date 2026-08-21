@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from nfl_fetch import attach_espn, fetch_draftkings, fetch_espn
+from nfl_fetch import attach_espn, fetch_draftkings, fetch_espn, name_key
 from nfl_scoring import SKILL, complete_stats, skill_points
 from nfl_sim import simulate
 
@@ -18,7 +18,7 @@ TEAMS = 10
 SLOTS = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "K": 1, "DST": 1}
 FLEX = 1
 FLEX_ELIGIBLE = {"RB", "WR", "TE"}
-DEFAULT_LINES = Path("nfl/vegas_2026.csv")
+DEFAULT_LINES = Path("nfl/dk_offering.csv")
 OUT = Path("nfl_rankings_2026.csv")
 
 
@@ -40,12 +40,42 @@ def replacement_points(df):
 
 
 def load_lines(path):
-    df = pd.read_csv(path)
-    df["position"] = df["position"].replace({"DEF": "DST", "D/ST": "DST"})
+    peek = pd.read_csv(path, nrows=1)
+    if "Market" in peek.columns and "Player" in peek.columns:
+        from nfl_dk import parse_offering
+        from nfl_hist import expected_from_hist, fill_from_hist, load_hist
+        _, wide = parse_offering(path)
+        hist = load_hist()
+        filled = fill_from_hist(wide, expected_from_hist(hist))
+        n_dk = int((filled.get("n_dk", 0) > 0).sum())
+        n_hist = int((filled.get("line_source", "") == "hist").sum())
+        print(f"DK: {n_dk} players with markets; hist MC fill: {n_hist} others")
+        df = filled
+    else:
+        df = pd.read_csv(path)
+    df["position"] = df["position"].replace({"DEF": "DST", "D/ST": "DST", "FB": "RB"})
     df = complete_stats(df)
     skill = df["position"].isin(SKILL)
     df.loc[skill, "_det"] = df.loc[skill].apply(skill_points, axis=1)
     return df
+
+
+def drop_unsigned_hist(board, espn=None):
+    """Hist-only names need a 2026 ESPN team. Unsigned/retired stay off the board."""
+    hist = board["line_source"].fillna("").eq("hist")
+    if not hist.any():
+        return board
+    if espn is None or getattr(espn, "empty", True):
+        keep = ~hist | board["team"].fillna("").astype(str).str.strip().ne("")
+        return board.loc[keep].copy()
+    e = espn[espn["position"].isin(list(SKILL))].copy()
+    rostered = {
+        name_key(n)
+        for n, t in zip(e["name"], e["team"].fillna(""))
+        if str(t).strip()
+    }
+    keys = board["name"].map(name_key)
+    return board.loc[~hist | keys.isin(rostered)].copy()
 
 
 def rank(df):
@@ -75,10 +105,26 @@ def run(lines_path=DEFAULT_LINES, n_sims=4000, use_espn=True):
         try:
             espn = fetch_espn()
             board = attach_espn(board, espn)
+            before = len(board)
+            board = drop_unsigned_hist(board, espn)
+            dropped = before - len(board)
+            if dropped:
+                print(f"Dropped {dropped} hist-only players with no 2026 team")
             print(f"ESPN ADP matched {board['adp'].notna().sum()} / {len(board)} players")
         except Exception as e:
             print(f"ESPN ADP skipped: {e}", file=sys.stderr)
             board["team"] = board.get("team", pd.Series("", index=board.index))
+        kdst = espn[espn["position"].isin(["K", "DST"])].copy() if espn is not None else pd.DataFrame()
+        if len(kdst):
+            have = set(board["name"].map(name_key))
+            kdst["_k"] = [
+                name_key(t if p == "DST" else n)
+                for n, p, t in zip(kdst["name"], kdst["position"], kdst["team"])
+            ]
+            kdst = kdst[~kdst["_k"].isin(have)].drop(columns=["_k"])
+            kdst["source_points"] = pd.to_numeric(kdst["espn_proj"], errors="coerce")
+            kdst["line_source"] = "espn"
+            board = pd.concat([board, kdst], ignore_index=True, sort=False)
     if "team" not in board.columns:
         board["team"] = ""
     board["team"] = board["team"].fillna("")
@@ -87,7 +133,7 @@ def run(lines_path=DEFAULT_LINES, n_sims=4000, use_espn=True):
     cols = [
         "rank", "pos_rank", "name", "position", "team",
         "proj_points", "floor", "ceil", "draft_value",
-        "adp", "adp_gap", "espn_proj", "injury",
+        "adp", "adp_gap", "espn_proj", "injury", "line_source",
         "pass_yds", "pass_td", "interceptions",
         "rush_yds", "rush_td", "receptions", "rec_yds", "rec_td", "fumbles",
     ]

@@ -175,14 +175,18 @@ def fetch_draftkings(sleep=0.25):
 
 
 def attach_espn(vegas, espn):
-    """Left-join ESPN ADP onto the market table by normalized name+position."""
+    """Join ESPN ADP by name. ESPN position/team win (fantasy slot, current roster)."""
     v = vegas.copy()
-    v["_key"] = [name_key(n) for n in v["name"]]
+    v["_key"] = v["name"].map(name_key)
     e = espn.copy()
     e["_key"] = [
         name_key(t if p == "DST" else n)
         for n, p, t in zip(e["name"], e["position"], e["team"])
     ]
-    keep = e[["_key", "position", "team", "adp", "espn_rank", "espn_proj", "injury"]]
-    merged = v.merge(keep, on=["_key", "position"], how="left")
-    return merged.drop(columns=["_key"])
+    keep = (e.drop_duplicates("_key")
+            [["_key", "position", "team", "adp", "espn_rank", "espn_proj", "injury"]]
+            .rename(columns={"position": "position_espn", "team": "team_espn"}))
+    merged = v.merge(keep, on="_key", how="left")
+    merged["position"] = merged["position_espn"].combine_first(merged["position"])
+    merged["team"] = merged["team_espn"].combine_first(merged["team"])
+    return merged.drop(columns=["_key", "position_espn", "team_espn"])
