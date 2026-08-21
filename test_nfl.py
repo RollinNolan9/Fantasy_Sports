@@ -175,6 +175,15 @@ class Offering(unittest.TestCase):
         self.assertAlmostEqual(d.rec_yds, 774.5, places=1)
         self.assertLess(d.rush_yds if pd.notna(d.rush_yds) else 0, 50)
 
+    def test_vegas_beats_hist_when_dk_omits(self):
+        _, wide, dirty = parse_offering("nfl/dk_offering.csv")
+        self.assertTrue(wide[wide.name.eq("Jauan Jennings")].empty)
+        out = overlay_vegas(wide, dirty)
+        j = out[out.name.eq("Jauan Jennings")].iloc[0]
+        self.assertEqual(j.line_source, "vegas")
+        self.assertAlmostEqual(j.rec_yds, 487.0, places=1)
+        self.assertAlmostEqual(j.rec_td, 3.0, places=1)
+
     def test_unsigned_hist_dropped(self):
         board = pd.DataFrame([
             {"name": "Jahmyr Gibbs", "team": "DET", "position": "RB",

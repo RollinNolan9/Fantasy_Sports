@@ -51,8 +51,8 @@ def load_lines(path):
         filled = fill_from_hist(wide, expected_from_hist(hist))
         n_dk = int((filled.get("n_dk", 0) > 0).sum())
         n_hist = int((filled.get("line_source", "") == "hist").sum())
-        print(f"DK: {n_dk} clean markets; Vegas fallback: {n_vegas} "
-              f"(dup/error); hist MC: {n_hist} others")
+        print(f"DK: {n_dk} clean markets; Vegas: {n_vegas} "
+              f"(dirty DK or no DK ticket); hist MC: {n_hist} others")
         df = filled
     else:
         df = pd.read_csv(path)

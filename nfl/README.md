@@ -26,9 +26,9 @@ in a 10-team draft. Josh Allen can be QB1 and still go in the late 2nd.
 1. **Lines** — your DraftKings offering workbook (`nfl/dk_offering.csv`)
    is the source of truth. Balanced O/Us are de-vigged (`nfl_lines.py`)
    so a -120 / +100 over sits a bit above the printed number. Milestones
-   and IDP sacks are ignored. Duplicate names (Bowers WR/TE, two teams) or
-   error rows (`10+` ticket ids) fall back to the previous Vegas snapshot
-   (`nfl/vegas_2026.csv`) instead of merging junk.
+   and IDP sacks are ignored. Duplicate names, error rows (`10+` tickets),
+   or anyone DK never posted who *is* on the previous Vegas snapshot
+   (`nfl/vegas_2026.csv`) use that book line. Hist does not overwrite a book.
 2. **Everyone else** — players (and missing stats) with no DK ticket are
    filled by a 2k-draw Monte Carlo of 2024+2025 regular-season rates
    (`nfl_hist.py`). 2025 is weighted 65%. Companion TDs/receptions are

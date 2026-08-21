@@ -112,15 +112,19 @@ def parse_offering(path):
 
 
 def overlay_vegas(dk_wide, dirty, vegas_path=VEGAS_PATH):
-    """Replace duplicate/error DK names with the previous Vegas snapshot."""
+    """Vegas beats hist. Dirty DK names, plus anyone DK never posted."""
     dirty_keys = {name_key(n) for n in dirty}
     dk = dk_wide.copy()
     if "name" in dk.columns and len(dk):
         dk["_k"] = dk["name"].map(name_key)
-        dk = dk[~dk["_k"].isin(dirty_keys)].drop(columns="_k")
+        dk = dk[~dk["_k"].isin(dirty_keys)]
+    else:
+        dk["_k"] = pd.Series(dtype=object)
+    have = set(dk["_k"].dropna())
     vegas = pd.read_csv(vegas_path)
     vegas["_k"] = vegas["name"].map(name_key)
-    take = vegas[vegas["_k"].isin(dirty_keys)].drop_duplicates("_k")
+    take = vegas[vegas["_k"].isin(dirty_keys) | ~vegas["_k"].isin(have)].drop_duplicates("_k")
     take["line_source"] = "vegas"
     take["n_dk"] = 0
+    dk = dk.drop(columns="_k", errors="ignore")
     return pd.concat([dk, take.drop(columns="_k")], ignore_index=True, sort=False)
