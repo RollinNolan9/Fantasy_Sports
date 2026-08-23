@@ -13,8 +13,9 @@ python3 model.py 2026       # -> projections_2026.csv
 python3 backtest.py         # 2023-2025, don't ship a change that loses here
 ```
 
-`overrides.csv` (name,role) and `playcallers.csv` (year,team,source_team)
-are the two knobs. Everything else is frozen.
+`overrides.csv` (name,role,games) and `playcallers.csv` (year,team,source_team)
+are the two knobs. Empty games leaves the 12-game health-conditional proj.
+Everything else is frozen.
 
 ## What v2 is
 

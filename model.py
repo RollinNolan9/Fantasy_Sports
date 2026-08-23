@@ -36,17 +36,25 @@ FEATURES = [
 ] + [f"pos_{p}" for p in POSITIONS]
 
 
-def cap_rooms(te, copilot=0.70):
+def cap_rooms(te, copilot=0.70, leads=()):
     """RB/QB committee #2 can't price like the lead. WR rooms can support two.
 
-    Leader unchanged. Non-lead RB/QB capped at copilot x the room's top projection.
+    Leader unchanged. Non-lead RB/QB capped at copilot x the room lead.
+    `leads` are confirmed starters — they are the lead even if another
+    body in the room still has a higher raw projection.
     """
     lead = te.groupby(["team", "position"])["proj_points"].transform("max")
-    cap = lead * copilot
-    is_lead = te["proj_points"] >= lead
+    locked = te["name"].isin(leads) & te["position"].isin(["QB", "RB"])
+    if locked.any():
+        key = te.loc[locked].drop_duplicates(["team", "position"]).set_index(["team", "position"])["proj_points"]
+        mapped = pd.Series(te.set_index(["team", "position"]).index.map(key), index=te.index)
+        lead = mapped.fillna(lead)
+        is_lead = locked | (mapped.isna() & (te["proj_points"] >= lead))
+    else:
+        is_lead = te["proj_points"] >= lead
     apply = te["position"].isin(["RB", "QB"]) & ~is_lead
     te = te.copy()
-    te.loc[apply, "proj_points"] = te.loc[apply, "proj_points"].clip(upper=cap[apply]).round(1)
+    te.loc[apply, "proj_points"] = te.loc[apply, "proj_points"].clip(upper=(lead * copilot)[apply]).round(1)
     return te
 
 
@@ -92,17 +100,21 @@ def predict_year(target):
     lr = last_rate.reindex(te.index)
     lr = lr.where(te["from_fcs"] == 0)  # raw FCS rates don't translate; ML only
     te["role"] = role.round(2)
-    # human depth-chart knowledge beats preseason data: overrides.csv
-    # (name,role) replaces the predicted role factor, e.g. "Deuce Knight,0.1"
-    # for a confirmed backup or "Some Riser,1" for a camp-battle winner
+    # overrides.csv: name,role,games -- role is job security; games scales the
+    # 12-game proj after committee caps so an injury doesn't shrink the backup.
+    leads = ()
     try:
         ov = pd.read_csv("overrides.csv")
         te["role"] = te["name"].map(dict(zip(ov["name"], ov["role"]))).fillna(te["role"])
+        games_ov = dict(zip(ov["name"], ov["games"])) if "games" in ov.columns else {}
+        leads = tuple(ov.loc[pd.to_numeric(ov["role"], errors="coerce") == 1, "name"])
     except FileNotFoundError:
-        pass
+        games_ov = {}
     te["proj_points"] = ((BLEND * lr + (1 - BLEND) * ml).where(lr.notna(), ml)
                          * te["role"]).round(1)
-    te = cap_rooms(te.reset_index())
+    te = cap_rooms(te.reset_index(), leads=leads)
+    scale = te["name"].map(games_ov) / GAMES
+    te["proj_points"] = (te["proj_points"] * scale.fillna(1)).round(1)
     te = te.sort_values("proj_points", ascending=False)
     repl = replacement_points(te)
     te["draft_value"] = (te["proj_points"] - te["position"].map(repl)).round(1)
@@ -111,7 +123,12 @@ def predict_year(target):
     te["pos_rank"] = (te["position"]
                       + te.groupby("position")["proj_points"]
                           .rank(ascending=False, method="first").astype(int).astype(str))
-    return te[["rank", "pos_rank", "playerId", "name", "position", "team",
+    try:
+        abbr = pd.read_csv("data/team_abbr.csv").drop_duplicates("team").set_index("team")["abbr"]
+        te["team"] = te["team"].map(abbr).fillna(te["team"])
+    except FileNotFoundError:
+        pass
+    return te[["name", "team", "rank", "pos_rank", "playerId", "position",
                "role", "proj_points", "draft_value"]]
 
 

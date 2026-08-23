@@ -99,6 +99,16 @@ def fetch_coaches(min_year):
     print(f"coaches: {len(rows)} coach-seasons")
 
 
+def fetch_abbr():
+    out = "data/team_abbr.csv"
+    if os.path.exists(out):
+        return
+    rows = [{"team": t["school"], "abbr": t["abbreviation"]}
+            for t in get("/teams/fbs", year=2026)]
+    pd.DataFrame(rows).to_csv(out, index=False)
+    print(f"team abbreviations: {len(rows)}")
+
+
 if __name__ == "__main__":
     os.makedirs("data", exist_ok=True)
     years = [int(a) for a in sys.argv[1:]] or range(2014, 2027)
@@ -107,3 +117,4 @@ if __name__ == "__main__":
         if y >= GAMES_SINCE and os.path.exists(f"data/players_{y}.csv"):
             fetch_games(y)
     fetch_coaches(min(years))
+    fetch_abbr()
