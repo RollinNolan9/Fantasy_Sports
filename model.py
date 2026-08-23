@@ -36,25 +36,24 @@ FEATURES = [
 ] + [f"pos_{p}" for p in POSITIONS]
 
 
-def cap_rooms(te, copilot=0.70, leads=()):
-    """RB/QB committee #2 can't price like the lead. WR rooms can support two.
+QB_BACKUP = 0.25  # injury stash, not a committee share
 
-    Leader unchanged. Non-lead RB/QB capped at copilot x the room lead.
-    `leads` are confirmed starters — they are the lead even if another
-    body in the room still has a higher raw projection.
-    """
+
+def cap_rooms(te, copilot=0.70):
+    """RB committee #2 can't price like the lead. QBs are one starter."""
     lead = te.groupby(["team", "position"])["proj_points"].transform("max")
-    locked = te["name"].isin(leads) & te["position"].isin(["QB", "RB"])
-    if locked.any():
-        key = te.loc[locked].drop_duplicates(["team", "position"]).set_index(["team", "position"])["proj_points"]
-        mapped = pd.Series(te.set_index(["team", "position"]).index.map(key), index=te.index)
-        lead = mapped.fillna(lead)
-        is_lead = locked | (mapped.isna() & (te["proj_points"] >= lead))
-    else:
-        is_lead = te["proj_points"] >= lead
-    apply = te["position"].isin(["RB", "QB"]) & ~is_lead
+    apply = (te["position"] == "RB") & (te["proj_points"] < lead)
     te = te.copy()
     te.loc[apply, "proj_points"] = te.loc[apply, "proj_points"].clip(upper=(lead * copilot)[apply]).round(1)
+    return te
+
+
+def lock_qb_starters(te, starters):
+    """Named QB1 owns the job. Everyone else in that room is a backup."""
+    qbs = te["position"] == "QB"
+    named = te["name"].isin(starters) & qbs
+    te = te.copy()
+    te.loc[qbs & te["team"].isin(te.loc[named, "team"]) & ~named, "role"] = QB_BACKUP
     return te
 
 
@@ -110,9 +109,10 @@ def predict_year(target):
         leads = tuple(ov.loc[pd.to_numeric(ov["role"], errors="coerce") == 1, "name"])
     except FileNotFoundError:
         games_ov = {}
+    te = lock_qb_starters(te, leads)
     te["proj_points"] = ((BLEND * lr + (1 - BLEND) * ml).where(lr.notna(), ml)
                          * te["role"]).round(1)
-    te = cap_rooms(te.reset_index(), leads=leads)
+    te = cap_rooms(te.reset_index())
     scale = te["name"].map(games_ov) / GAMES
     te["proj_points"] = (te["proj_points"] * scale.fillna(1)).round(1)
     te = te.sort_values("proj_points", ascending=False)

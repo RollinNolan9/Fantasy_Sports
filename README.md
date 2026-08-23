@@ -24,9 +24,10 @@ Gradient boosting on post-COVID regular-season data, health-conditional
 above replacement. Last season is an input feature; it is not mixed in again
 after the model (a 0–100% stickiness sweep lost to 0% on MAE and yield).
 New college playcallers inherit their previous stop's pace/pass rate; SP+
-stays with the current roster. RB/QB rooms: the #2 is capped at 70% of the
-lead so a committee doesn't mint two first-round backs. (Small backtest
-tax vs uncapped: yield 106.6 vs 107.6.)
+stays with the current roster. RB rooms: the #2 is capped at 70% of the
+lead so a committee doesn't mint two first-round backs. QBs are not a
+committee — a named starter owns the job and the rest of the room is a
+backup. (Small backtest tax vs uncapped RB rooms: yield 106.6 vs 107.6.)
 
 ## Backtest (2023-2025)
 
