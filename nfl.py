@@ -1,6 +1,6 @@
-"""10-team ESPN PPR draft board from sportsbook season-long lines + Monte Carlo.
+"""ESPN PPR draft boards from sportsbook season-long lines + Monte Carlo.
 
-python3 nfl.py                 # -> nfl_rankings_2026.csv
+python3 nfl.py                 # 10-team 1QB + 12-team Superflex CSVs
 python3 nfl.py --fetch-dk      # try live DraftKings (often blocked off-home IPs)
 python3 nfl.py --lines PATH    # use a different lines CSV
 """
@@ -14,22 +14,47 @@ from nfl_fetch import attach_espn, fetch_draftkings, fetch_espn, name_key
 from nfl_scoring import SKILL, complete_stats, skill_points
 from nfl_sim import simulate
 
-TEAMS = 10
 SLOTS = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "K": 1, "DST": 1}
-FLEX = 1
 FLEX_ELIGIBLE = {"RB", "WR", "TE"}
+SFLEX_ELIGIBLE = {"QB", "RB", "WR", "TE"}
 DEFAULT_LINES = Path("nfl/dk_offering.csv")
+
+# Keep names the 10-team tests/docs already use.
+TEAMS = 10
+FLEX = 1
 OUT = Path("nfl_rankings_2026.csv")
+OUT_SF = Path("nfl_rankings_2026_superflex.csv")
+
+ONE_QB = {
+    "name": "10-team 1QB",
+    "teams": 10,
+    "slots": SLOTS,
+    "flex": 1,
+    "superflex": 0,
+    "out": OUT,
+}
+SUPERFLEX = {
+    "name": "12-team Superflex",
+    "teams": 12,
+    "slots": SLOTS,
+    "flex": 1,
+    "superflex": 1,
+    "out": OUT_SF,
+}
 
 
-def replacement_points(df):
-    leftover = {p: n * TEAMS for p, n in SLOTS.items()}
-    flex_left = FLEX * TEAMS
+def replacement_points(df, league=ONE_QB):
+    teams = league["teams"]
+    leftover = {p: n * teams for p, n in league["slots"].items()}
+    flex_left = league["flex"] * teams
+    sflex_left = league.get("superflex", 0) * teams
     repl = {}
     for r in df.sort_values("proj_points", ascending=False).itertuples():
         pos = r.position
         if leftover.get(pos, 0) > 0:
             leftover[pos] -= 1
+        elif sflex_left and pos in SFLEX_ELIGIBLE:
+            sflex_left -= 1
         elif pos in FLEX_ELIGIBLE and flex_left > 0:
             flex_left -= 1
         elif pos not in repl:
@@ -94,9 +119,9 @@ def pick_replacement(repl):
     return out
 
 
-def rank(df):
+def rank(df, league=ONE_QB):
     df = df.sort_values("proj_points", ascending=False)
-    repl = replacement_points(df)
+    repl = replacement_points(df, league)
     pick = pick_replacement(repl)
     df["draft_value"] = (df["proj_points"] - df["position"].map(pick)).round(1)
     skill = df["position"].isin(SKILL)
@@ -147,7 +172,6 @@ def run(lines_path=DEFAULT_LINES, n_sims=4000, use_espn=True):
         board["team"] = ""
     board["team"] = board["team"].fillna("")
     board = simulate(board, n_sims=n_sims)
-    board, repl = rank(board)
     cols = [
         "rank", "pos_rank", "name", "position", "team",
         "proj_points", "floor", "ceil", "draft_value",
@@ -155,13 +179,20 @@ def run(lines_path=DEFAULT_LINES, n_sims=4000, use_espn=True):
         "pass_yds", "pass_td", "interceptions",
         "rush_yds", "rush_td", "receptions", "rec_yds", "rec_td", "fumbles",
     ]
-    for c in cols:
-        if c not in board.columns:
-            board[c] = ""
-    out = board[cols].copy()
-    for c in ("proj_points", "floor", "ceil", "draft_value", "adp", "adp_gap", "espn_proj"):
-        out[c] = pd.to_numeric(out[c], errors="coerce").round(1)
-    return out, repl
+
+    def _sheet(league):
+        ranked, repl = rank(board.copy(), league)
+        for c in cols:
+            if c not in ranked.columns:
+                ranked[c] = ""
+        out = ranked[cols].copy()
+        for c in ("proj_points", "floor", "ceil", "draft_value", "adp", "adp_gap", "espn_proj"):
+            out[c] = pd.to_numeric(out[c], errors="coerce").round(1)
+        return out, repl
+
+    one, repl = _sheet(ONE_QB)
+    sf, sf_repl = _sheet(SUPERFLEX)
+    return one, repl, sf, sf_repl
 
 
 def main():
@@ -194,11 +225,17 @@ def main():
                   f"Their sportsbook blocks datacenter IPs; "
                   f"using {args.lines}.", file=sys.stderr)
 
-    out, repl = run(Path(args.lines), n_sims=args.sims, use_espn=not args.no_espn)
-    out.to_csv(OUT, index=False)
-    print(out.head(40).to_string(index=False))
+    one, repl, sf, sf_repl = run(Path(args.lines), n_sims=args.sims, use_espn=not args.no_espn)
+    one.to_csv(OUT, index=False)
+    sf.to_csv(OUT_SF, index=False)
+    print(f"\n=== {ONE_QB['name']} ===")
+    print(one.head(40).to_string(index=False))
     print("\nreplacement:", {p: round(float(v), 1) for p, v in repl.items()})
-    print(f"\n{len(out)} players -> {OUT}")
+    print(f"{len(one)} players -> {OUT}")
+    print(f"\n=== {SUPERFLEX['name']} ===")
+    print(sf.head(40).to_string(index=False))
+    print("\nreplacement:", {p: round(float(v), 1) for p, v in sf_repl.items()})
+    print(f"{len(sf)} players -> {OUT_SF}")
 
 
 if __name__ == "__main__":

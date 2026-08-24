@@ -7,8 +7,13 @@ into draft value for *this* league.
 pip install -r requirements.txt
 python3 test_nfl.py          # scoring / juice / VORP / sim
 python3 nfl.py               # -> nfl_rankings_2026.csv
-python3 nfl.py --fetch-dk    # live DraftKings (works on a home IP; blocked here)
+                             #    nfl_rankings_2026_superflex.csv
 ```
+
+Two leagues, same book lines:
+
+- `nfl_rankings_2026.csv` — 10-team 1QB (1 QB, 2 RB, 2 WR, 1 TE, 1 FLEX, 1 K, 1 DST)
+- `nfl_rankings_2026_superflex.csv` — 12-team Superflex (same, plus 1 Superflex). QBs jump because 24 starters (12 QB + 12 SF).
 
 ## Why this, not analyst rankings
 
@@ -20,6 +25,7 @@ score them as ESPN PPR, and rank by **points above replacement** in a
 
 Raw fantasy points overrate quarterbacks in 1QB. VORP is the entire edge
 in a 10-team draft. Josh Allen can be QB1 and still go in the late 2nd.
+In Superflex the opposite: the 24th QB still starts, so Allen is a first-rounder.
 
 ## Pipeline
 
@@ -49,9 +55,11 @@ in a 10-team draft. Josh Allen can be QB1 and still go in the late 2nd.
 ## How to actually draft with it
 
 - Sort the CSV by `rank` (already VORP). Ignore raw `proj_points` for pick
-  order.
+  order. Use the 1QB file in the 10-team league and the Superflex file in
+  the 12-team SF league — they are different pick orders.
 - In a 10-team PPR, the board will push RB/WR in the first four rounds and
   let QB slide unless a dual-threat is being drafted behind his VORP.
+- In 12-team Superflex, lock a QB early (often two). Streaming QB is dead.
 - `adp` is the room, not the model. Ignore it for pick order.
 - `ceil - floor` is volatility. Prefer high ceiling after pick 80.
 - K and DST are streamed. The board ranks them; do not spend a pick before
@@ -64,5 +72,5 @@ in a 10-team draft. Josh Allen can be QB1 and still go in the late 2nd.
 - Not a play-by-play NFL simulator. Game-level sim would need a play-calling
   model and would mostly rediscover the same season totals the books already
   posted.
-- Not a 12-team / superflex board. Change `TEAMS` / `SLOTS` / `FLEX` in
-  `nfl.py` if the league isn't 10-team 1QB PPR.
+- Superflex assumes 1 QB / 2 RB / 2 WR / 1 TE / 1 FLEX / 1 SF / 1 K / 1 DST.
+  If your SF league starts 3 WR, say so and the VORP cut can move.

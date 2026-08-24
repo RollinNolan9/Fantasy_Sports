@@ -8,7 +8,7 @@ from nfl_hist import fill_from_hist
 from nfl_lines import american_to_prob, expected_from_ou, fair_over_prob
 from nfl_scoring import complete_stats, skill_points
 from nfl_sim import simulate
-from nfl import drop_unsigned_hist, rank
+from nfl import SUPERFLEX, drop_unsigned_hist, rank
 
 
 class Scoring(unittest.TestCase):
@@ -102,6 +102,30 @@ class Vorp(unittest.TestCase):
         self.assertEqual(ranked.loc[ranked.name.eq("Elite TE")].iloc[0].pos_rank, "TE1")
         mid = ranked.loc[ranked.name.eq("TE0")].iloc[0]
         self.assertGreater(mid["rank"], 40)
+
+    def test_superflex_starts_two_qbs(self):
+        rows = []
+        for i in range(30):
+            rows.append({"name": f"QB{i}", "position": "QB", "proj_points": 320 - i})
+        for i in range(30):
+            rows.append({"name": f"RB{i}", "position": "RB", "proj_points": 250 - i})
+        for i in range(30):
+            rows.append({"name": f"WR{i}", "position": "WR", "proj_points": 240 - i})
+        for i in range(15):
+            rows.append({"name": f"TE{i}", "position": "TE", "proj_points": 180 - i})
+        for i in range(12):
+            rows.append({"name": f"K{i}", "position": "K", "proj_points": 100 - i})
+        for i in range(12):
+            rows.append({"name": f"D{i}", "position": "DST", "proj_points": 90 - i})
+        df = pd.DataFrame(rows).assign(floor=0, ceil=0)
+        one, one_repl = rank(df.copy())
+        sf, sf_repl = rank(df.copy(), SUPERFLEX)
+        # 12 QB slots + 12 superflex = 24 QB starters, 25th is replacement
+        self.assertEqual(sf_repl["QB"], 296)  # 320, 319, ... 296
+        self.assertLess(sf_repl["QB"], one_repl["QB"])
+        sf_qb = sf.loc[sf.position.eq("QB")].iloc[0].draft_value
+        one_qb = one.loc[one.position.eq("QB")].iloc[0].draft_value
+        self.assertGreater(sf_qb, one_qb)
 
 
 class Sim(unittest.TestCase):
