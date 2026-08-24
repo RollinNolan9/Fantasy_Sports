@@ -1,7 +1,7 @@
 # Fantasy_Sports v2
 
-Season-long college football projections for an 18-team Fantrax league:
-1QB / 2RB / 2WR / 3 FLEX (RB/WR). Not superflex. TEs, K, D/ST not started.
+Season-long college football projections for a 14-team Fantrax league:
+2QB / 2RB / 2WR / 3 FLEX (RB/WR). Not superflex. TEs, K, D/ST not started.
 
 Scoring: 0.5 PPR, 4-pt pass TD (`SCORING` in `projections.py`).
 

@@ -19,8 +19,8 @@ ALPHA = 5
 BLEND = 0.0   # backtest: any last-year stickiness hurt MAE and yield; rho was flat
 FULL_ROLE_GAMES = 9
 
-TEAMS = 18
-SLOTS = {"QB": 1, "RB": 2, "WR": 2}
+TEAMS = 14
+SLOTS = {"QB": 2, "RB": 2, "WR": 2}
 FLEX = 3
 FLEX_ELIGIBLE = {"RB", "WR"}
 
