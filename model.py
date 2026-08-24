@@ -20,9 +20,9 @@ BLEND = 0.0   # backtest: any last-year stickiness hurt MAE and yield; rho was f
 FULL_ROLE_GAMES = 9
 
 TEAMS = 14
-SLOTS = {"QB": 2, "RB": 2, "WR": 2}
-FLEX = 3
-FLEX_ELIGIBLE = {"RB", "WR"}
+SLOTS = {"QB": 2, "RB": 2, "WR": 2, "K": 1, "DST": 1}
+FLEX = 2
+FLEX_ELIGIBLE = {"RB", "WR", "TE"}
 
 FEATURES = [
     "fppg_1", "fppg_2", "fppg_3", "played_1", "games_1", "rate_1",
@@ -138,5 +138,5 @@ if __name__ == "__main__":
     out.to_csv(f"projections_{year}.csv", index=False)
     print(out.head(30).to_string(index=False))
     repl = replacement_points(out)
-    print("\nreplacement:", {p: round(repl[p], 1) for p in POSITIONS})
+    print("\nreplacement:", {p: round(repl[p], 1) for p in list(SLOTS) + POSITIONS if p in repl})
     print(f"v{VERSION}  {len(out)} players -> projections_{year}.csv")

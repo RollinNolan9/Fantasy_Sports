@@ -1,9 +1,10 @@
 # Fantasy_Sports v2
 
 Season-long college football projections for a 14-team Fantrax league:
-2QB / 2RB / 2WR / 3 FLEX (RB/WR). Not superflex. TEs, K, D/ST not started.
+2QB / 2RB / 2WR / 2 FLEX (RB/WR/TE) / 1 K / 1 D/ST. 0.5 PPR, 4-pt pass TD.
 
-Scoring: 0.5 PPR, 4-pt pass TD (`SCORING` in `projections.py`).
+Scoring: `SCORING` in `projections.py` (offense). K and D/ST are rostered
+but not projected yet — no kicking or team-defense pipeline.
 
 ```bash
 pip install -r requirements.txt
