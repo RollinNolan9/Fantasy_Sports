@@ -37,6 +37,7 @@ FEATURES = [
 
 
 QB_BACKUP = 0.25  # injury stash, not a committee share
+ROLE_ALIAS = {"contested": 0.70}  # committee #2, same factor as cap_rooms
 
 
 def cap_rooms(te, copilot=0.70):
@@ -104,9 +105,11 @@ def predict_year(target):
     leads = ()
     try:
         ov = pd.read_csv("overrides.csv")
-        te["role"] = te["name"].map(dict(zip(ov["name"], ov["role"]))).fillna(te["role"])
+        role_n = ov["role"].map(lambda x: ROLE_ALIAS.get(str(x).strip().lower(),
+                                pd.to_numeric(x, errors="coerce")))
+        te["role"] = te["name"].map(dict(zip(ov["name"], role_n))).fillna(te["role"])
         games_ov = dict(zip(ov["name"], ov["games"])) if "games" in ov.columns else {}
-        leads = tuple(ov.loc[pd.to_numeric(ov["role"], errors="coerce") == 1, "name"])
+        leads = tuple(ov.loc[role_n == 1, "name"])
     except FileNotFoundError:
         games_ov = {}
     te = lock_qb_starters(te, leads)
