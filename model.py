@@ -40,10 +40,15 @@ QB_BACKUP = 0.25  # injury stash, not a committee share
 ROLE_ALIAS = {"contested": 0.70}  # committee #2, same factor as cap_rooms
 
 
-def cap_rooms(te, copilot=0.70):
-    """RB committee #2 can't price like the lead. QBs are one starter."""
+def cap_rooms(te, copilot=0.70, skip_teams=()):
+    """RB committee #2 can't price like the lead. QBs are one starter.
+
+    Rooms with a `contested` override are already timeshare-priced; don't
+    recap the copilot off the lowered lead.
+    """
     lead = te.groupby(["team", "position"])["proj_points"].transform("max")
-    apply = (te["position"] == "RB") & (te["proj_points"] < lead)
+    apply = ((te["position"] == "RB") & (te["proj_points"] < lead)
+             & ~te["team"].isin(skip_teams))
     te = te.copy()
     te.loc[apply, "proj_points"] = te.loc[apply, "proj_points"].clip(upper=(lead * copilot)[apply]).round(1)
     return te
@@ -103,6 +108,7 @@ def predict_year(target):
     # overrides.csv: name,role,games -- role is job security; games scales the
     # 12-game proj after committee caps so an injury doesn't shrink the backup.
     leads = ()
+    skip_teams = ()
     try:
         ov = pd.read_csv("overrides.csv")
         role_n = ov["role"].map(lambda x: ROLE_ALIAS.get(str(x).strip().lower(),
@@ -110,12 +116,15 @@ def predict_year(target):
         te["role"] = te["name"].map(dict(zip(ov["name"], role_n))).fillna(te["role"])
         games_ov = dict(zip(ov["name"], ov["games"])) if "games" in ov.columns else {}
         leads = tuple(ov.loc[role_n == 1, "name"])
+        contested = ov.loc[ov["role"].astype(str).str.lower().eq("contested"), "name"]
+        gamed = ov.loc[pd.to_numeric(ov.get("games"), errors="coerce").notna(), "name"]
+        skip_teams = tuple(te.loc[te["name"].isin(pd.concat([contested, gamed])), "team"].unique())
     except FileNotFoundError:
         games_ov = {}
     te = lock_qb_starters(te, leads)
     te["proj_points"] = ((BLEND * lr + (1 - BLEND) * ml).where(lr.notna(), ml)
                          * te["role"]).round(1)
-    te = cap_rooms(te.reset_index())
+    te = cap_rooms(te.reset_index(), skip_teams=skip_teams)
     scale = te["name"].map(games_ov) / GAMES
     te["proj_points"] = (te["proj_points"] * scale.fillna(1)).round(1)
     te = te.sort_values("proj_points", ascending=False)
