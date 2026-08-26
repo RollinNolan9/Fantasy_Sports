@@ -4,17 +4,29 @@ from functools import lru_cache
 
 import pandas as pd
 
-# 0.5 PPR, 4pt pass TD. Edit to match your league.
+# League scoring. Missing Fantrax rows are explicit zeros, not guesses.
+#   pass YDS 0.04 (1 / 25)   pass TD 4    INT -2
+#   rush/rec YDS 0.1 (1 / 10) rush/rec TD 6
+#   REC 0.5 (half-PPR)        fumble lost -2
+#   yardage / big-play bonuses: none
+#   2-pt conversions, return TDs: not in the CFBD extract; 0
 SCORING = {
     ("passing", "YDS"): 0.04, ("passing", "TD"): 4.0, ("passing", "INT"): -2.0,
     ("rushing", "YDS"): 0.1, ("rushing", "TD"): 6.0,
     ("receiving", "REC"): 0.5, ("receiving", "YDS"): 0.1, ("receiving", "TD"): 6.0,
     ("fumbles", "LOST"): -2.0,
 }
+BONUSES = {}          # no 100-yard / 300-yard / long-TD bonuses
+PLAYOFF_WEEKS = 0     # regular season only; bowls/CCGs are not fantasy weeks
 POSITIONS = ["QB", "RB", "WR", "TE"]
 WEIGHTS = {1: 0.6, 2: 0.3, 3: 0.1}  # seasons back -> weight
 SHRINK = 0.75                       # weight on player history vs positional mean
 GAMES = 12                          # regular-season games to project
+
+
+def score_stat(category, stat_type, value):
+    """Fantasy points for one stat line. Unknown (category, statType) → 0."""
+    return float(value) * SCORING.get((category, stat_type), 0.0)
 
 
 @lru_cache(maxsize=None)

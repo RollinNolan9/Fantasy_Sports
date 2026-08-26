@@ -64,7 +64,11 @@ def lock_qb_starters(te, starters):
 
 
 def replacement_points(df):
-    """First player at each position who doesn't start (dedicated slots, then flex)."""
+    """Legacy per-position baseline used by this CSV writer.
+
+    TE is optional in this league, so a private TE replacement over-credits
+    TEs. Rankings that matter live in valuation.py (lineup optimizer).
+    """
     leftover = {p: n * TEAMS for p, n in SLOTS.items()}
     flex_left = FLEX * TEAMS
     repl = {}
