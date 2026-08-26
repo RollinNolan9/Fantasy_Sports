@@ -6,8 +6,9 @@ import pandas as pd
 
 from projections import GAMES, PLAYOFF_WEEKS, SCORING, score_stat
 from valuation import (
-    CONTESTED_ROLE, COPILOT_SHARE, EXPECTED_QBS_ROSTERED_PER_TEAM, FLEX,
-    FLEX_ELIGIBLE, SLOTS, TEAMS, apply_qb_split_scenarios, apply_rb_committee_scenarios,
+    CONTESTED_ROLE, EXPECTED_QBS_ROSTERED_PER_TEAM, FLEX,
+    FLEX_ELIGIBLE, SCORING_PPR, SLOTS, TEAMS, WAIVER_REPLACEMENT_RANK,
+    apply_qb_split_scenarios, apply_rb_committee_scenarios,
     lineup_counts, n_qb_starters, n_skill_starters, select_lineup, starter_vorps,
     value_board,
 )
@@ -23,6 +24,9 @@ class ScoringTests(unittest.TestCase):
     def test_ten_receptions_are_five_points(self):
         self.assertEqual(SCORING[("receiving", "REC")], 0.5)
         self.assertEqual(score_stat("receiving", "REC", 10), 5.0)
+
+    def test_fifty_receptions_are_twenty_five_points(self):
+        self.assertEqual(score_stat("receiving", "REC", 50), 25.0)
 
     def test_half_ppr_everywhere_in_scoring_dict(self):
         self.assertEqual(SCORING[("receiving", "REC")], 0.5)
@@ -123,10 +127,61 @@ class BoardTests(unittest.TestCase):
 
     def test_no_nan_inf_ranks(self):
         for col in ["rank", "starter_vorp", "draft_adjusted_value", "managed_vorp",
-                    "projected_ppg", "p50"]:
+                    "projected_ppg"]:
             s = self.tuned[col]
             self.assertFalse(s.isna().any(), col)
             self.assertTrue(all(math.isfinite(float(x)) for x in s.head(2000)), col)
+
+    def test_percentiles_null_or_distinct(self):
+        d = self.tuned
+        identical = d["p10"].notna() & ((d["p90"] - d["p10"]).abs() < 0.5)
+        self.assertEqual(int(identical.sum()), 0)
+        low_conf = d[d["starter_probability"] < 0.85]
+        modeled = low_conf[low_conf["p10"].notna()]
+        if len(modeled):
+            self.assertTrue(((modeled["p90"] - modeled["p10"]).abs() > 0.5).all())
+        locked = d[(d["role"] >= 0.99) & (d["projected_games"] == 12)
+                   & ~d["contested"]]
+        # no scenario/injury → null percentiles, not a fake distribution
+        self.assertTrue(locked["p10"].isna().mean() > 0.8)
+
+    def test_wr_uses_wr29_not_flex(self):
+        wrs = self.tuned[self.tuned["position"] == "WR"]
+        positive = (wrs["draft_adjusted_value"] > 0).sum()
+        self.assertGreaterEqual(int(positive), 25)
+        barkate = wrs[wrs["name"] == "Cooper Barkate"]
+        if len(barkate):
+            self.assertGreater(float(barkate.iloc[0]["draft_adjusted_value"]), 0)
+        feagin = self.tuned[self.tuned["name"] == "Kaden Feagin"].iloc[0]
+        # TE still vs FLEX, not a private TE baseline
+        self.assertLess(abs(float(feagin["draft_adjusted_value"])
+                            - (float(feagin["managed_season_points"]) - self.info["flex_repl"])), 1.5)
+
+    def test_scoring_ppr_exported(self):
+        self.assertEqual(SCORING_PPR, 0.5)
+        self.assertTrue((self.tuned["scoring_ppr"] == 0.5).all())
+
+    def test_waiver_not_flex_for_missed_games(self):
+        h = self.tuned[self.tuned["name"] == "Ahmad Hardy"].iloc[0]
+        missed = 12 - float(h["projected_games"])
+        self.assertEqual(missed, 2)
+        expected = missed * float(h["waiver_replacement_ppg"])
+        self.assertAlmostEqual(float(h["replacement_points_during_absences"]), expected, delta=1.5)
+        self.assertEqual(int(h["waiver_replacement_rank"]), WAIVER_REPLACEMENT_RANK)
+        # ramped PPG is below full-workload 21.16
+        self.assertLess(float(h["projected_ppg"]), 21.0)
+
+    def test_davison_not_stuck_on_2025_injury(self):
+        d = self.tuned[self.tuned["name"] == "Jordon Davison"].iloc[0]
+        self.assertEqual(float(d["projected_games"]), 12)
+
+    def test_mccomb_named_starter(self):
+        m = self.tuned[self.tuned["name"] == "David McComb"].iloc[0]
+        g = self.tuned[self.tuned["name"] == "Thomas Gotkowski"].iloc[0]
+        self.assertGreaterEqual(float(m["starter_probability"]), 0.85)
+        self.assertGreater(float(m["projected_points_if_active"]), float(g["projected_points_if_active"]))
+        self.assertEqual(str(m["role_source_date"]), "2026-08-24")
+        self.assertNotEqual(str(m.get("source_as_of", "")), "2026-08-25")
 
     def test_named_starter_not_stale_backup(self):
         b = self.tuned[self.tuned["name"] == "Faizon Brandon"].iloc[0]
@@ -159,13 +214,14 @@ class BoardTests(unittest.TestCase):
         d["contested"] = True
         d["role_in"] = d["role"]
         out = apply_rb_committee_scenarios(d)
-        self.assertAlmostEqual(0.5 + 0.5, 1.0)
+        shares = out["expected_opportunity_share"]
+        self.assertAlmostEqual(float(shares.sum()), 1.0, delta=0.02)
+        self.assertTrue((shares < 0.70).all())
+        self.assertAlmostEqual(float(out["pts12"].iloc[0]), float(out["pts12"].iloc[1]), places=1)
         room = float(out["_room_expected"].iloc[0])
         budget = float(out["_room_budget"].iloc[0])
         self.assertAlmostEqual(room, budget, delta=budget * 0.02)
-        # identical teammates must share the same expected points (not one lead + one copilot)
-        self.assertAlmostEqual(float(out["pts12"].iloc[0]), float(out["pts12"].iloc[1]), places=1)
-        self.assertAlmostEqual(float(out["pts12"].iloc[0]), 0.5 * (227.142857 + 159.0), delta=0.2)
+        self.assertGreater(float(out["p90"].iloc[0]) - float(out["p10"].iloc[0]), 1)
 
     def test_qb_split_shares_sum_to_one(self):
         rows = [

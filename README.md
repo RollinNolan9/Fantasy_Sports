@@ -22,9 +22,10 @@ python3 backtest.py         # 2023-2025, needs data/; don't ship a change that l
 `overrides.csv` (name,role,games) and `depth_chart.csv` (football-role facts,
 no ranks) are the knobs. Empty games leaves the 12-game health-conditional
 proj. `valuation.py` turns that board into this league's ranks: lineup-optimizer
-VORP (28 QB + 84 RB/WR/TE with min 28 RB / 28 WR), managed replacement on
-missed games, and QB 28/35/42 roster sensitivity. Default draft rank uses
-42 rostered QBs (`expected_qbs_rostered_per_team = 3`).
+VORP (28 QB + 84 RB/WR/TE with min 28 RB / 28 WR), WR29 for mandatory WR
+starters (not FLEX), managed waiver replacement on missed games (default RB100),
+and QB 28/35/42 roster sensitivity. Default draft rank uses 42 rostered QBs
+(`expected_qbs_rostered_per_team = 3`).
 
 ## What v2 is
 
