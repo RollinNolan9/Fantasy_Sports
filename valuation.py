@@ -7,6 +7,7 @@ replacement.
 python3 valuation.py [year]
 """
 import json
+import os
 import sys
 from datetime import date, datetime
 
@@ -167,48 +168,137 @@ def transfer_displaced_rb_opportunity(df):
     return out
 
 
-def apply_rb_committee_scenarios(df):
-    """Mutually exclusive winner scenarios. One team RB budget; remainder to every other RB.
+def _rb_fp(rush_yds=0, rush_td=0, rec=0, rec_yds=0, rec_td=0):
+    """0.5 PPR fantasy points from RB rushing + receiving components."""
+    return (score_stat("rushing", "YDS", rush_yds) + score_stat("rushing", "TD", rush_td)
+            + score_stat("receiving", "REC", rec) + score_stat("receiving", "YDS", rec_yds)
+            + score_stat("receiving", "TD", rec_td))
 
-    Contested backs are the only job-winners. P(win) is the (normalized) starter_probability
-    prior, then overwritten with that P. p75/p90 for a winner is the job-winning share,
-    not a band around the mean.
+
+# Last available season component totals. Rates only — not 2026 point totals.
+# playerId -> (rush_yds, rush_td, rec, rec_yds, rec_td, games, same_2026_team)
+RB_LAST = {
+    "5193580": (1124, 14, 25, 224, 2, 14, True),   # Dickey TTU 2025
+    "5086393": (868, 6, 35, 388, 2, 14, True),     # Williams TTU 2025
+    "4917949": (478, 3, 12, 89, 1, 12, False),     # Joyner USC 2024 (missed 2025)
+    "5146712": (1125, 10, 15, 149, 2, 14, True),   # Riley BOIS 2025
+    "5147379": (811, 8, 11, 72, 1, 14, True),      # Gaines BOIS 2025
+    "5295318": (576, 5, 7, 55, 0, 6, True),        # Jordan USC 2025 (6g)
+    "5233016": (972, 8, 0, 0, 0, 13, True),        # Miller USC 2025; rec not sourced
+}
+
+# Evidence-based 2026 workload priors (sum ~1 per room). Not final ranks.
+RB_WORKLOAD = {
+    "5193580": 0.47, "5086393": 0.33, "4917949": 0.17,   # TTU Dickey/Williams/Joyner
+    "5146712": 0.48, "5147379": 0.34, "5124975": 0.12,   # BOIS Riley/Gaines/Goff
+    "5295318": 0.57, "5233016": 0.33, "5144164": 0.10,  # USC Jordan/Miller/Wormley
+    "5093886": 0.50, "5155048": 0.38,                      # IOWA Moulton/Phillips
+}
+
+
+def _rb_last_fp(pid):
+    row = RB_LAST.get(str(pid))
+    if not row:
+        return None
+    yds, td, rec, recy, rtd, games, same = row
+    return _rb_fp(yds, td, rec, recy, rtd), games, same, yds, td, rec, recy, rtd
+
+
+def apply_rb_committee_scenarios(df):
+    """Mutually exclusive winner scenarios on one component-scored team RB pool.
+
+    Pool = 12-game pace of last-year RB rush+rec fantasy points for this team
+    (fallback: share-weighted pts_full). Rush follows the winner scenario;
+    receiving stays with player-specific rec rates. Shares and P(win) sum to 1.
     """
     out = df.copy()
     out["pts12"] = out["pts12"].astype(float)
     out["pts_full"] = out["pts_full"].astype(float)
     if "starter_probability" not in out.columns:
-        out["starter_probability"] = 0.0
+        out["starter_probability"] = float("nan")
+    if "workload_share" not in out.columns:
+        out["workload_share"] = float("nan")
     rbs = out[out["position"] == "RB"]
     for _team, grp in rbs.groupby("team"):
         contested = grp[grp["contested"]]
         if len(contested) < 2:
             continue
-        budget = float(grp["pts_full"].max())
-        if budget <= 0:
-            continue
-        win_ids = list(contested.index)
-        prior = out.loc[win_ids, "starter_probability"].astype(float).clip(lower=0)
+        w = pd.to_numeric(out.loc[grp.index, "workload_share"], errors="coerce").fillna(0.0)
+        extra = grp.index[w > 0.05]
+        win_ids = list(dict.fromkeys(list(contested.index) + list(extra)))
+        prior = pd.to_numeric(out.loc[win_ids, "starter_probability"], errors="coerce").fillna(0.0)
         if float(prior.sum()) <= 0:
             prior = out.loc[win_ids, "pts_full"].clip(lower=1e-6)
         p_win = prior / prior.sum()
-        scenarios = {}
-        for w in win_ids:
-            shares = pd.Series(0.0, index=grp.index)
-            shares.loc[w] = PRIMARY_SHARE
-            rest = grp.index.difference([w])
-            rest_w = out.loc[rest, "pts_full"].clip(lower=1e-9)
-            if float(rest_w.sum()) > 0:
-                shares.loc[rest] = SECONDARY_SHARE * rest_w / rest_w.sum()
-            else:
-                shares.loc[w] = 1.0
-            scenarios[w] = shares
-        exp_share = sum((float(p_win.loc[w]) * scenarios[w] for w in win_ids),
-                        pd.Series(0.0, index=grp.index))
+
+        if float(w.sum()) <= 0:
+            w = out.loc[grp.index, "pts_full"].clip(lower=1e-9)
+        leftover = max(0.0, 1.0 - float(w.sum()))
+        rest = grp.index[w <= 0]
+        if leftover > 0 and len(rest):
+            rw = out.loc[rest, "pts_full"].clip(lower=1e-9)
+            w.loc[rest] = leftover * rw / rw.sum()
+        w = w / w.sum()
+
+        rush_w = pd.Series(0.0, index=grp.index)
+        rec_w = pd.Series(0.0, index=grp.index)
+        hist_fp, hist_games = 0.0, 0.0
         for idx in grp.index:
-            outcomes = [float(budget * scenarios[w].loc[idx]) for w in win_ids]
+            last = _rb_last_fp(out.at[idx, "playerId"])
+            if last:
+                fp, games, same, yds, td, rec, recy, rtd = last
+                rush_w.loc[idx] = (score_stat("rushing", "YDS", yds)
+                                   + score_stat("rushing", "TD", td)) / games
+                rec_w.loc[idx] = (score_stat("receiving", "REC", rec)
+                                  + score_stat("receiving", "YDS", recy)
+                                  + score_stat("receiving", "TD", rtd)) / games
+                if same:
+                    hist_fp += fp
+                    hist_games = max(hist_games, games)
+            else:
+                ppg = float(out.at[idx, "pts_full"]) / GAMES
+                rush_w.loc[idx] = 0.80 * ppg
+                rec_w.loc[idx] = 0.20 * ppg
+        rush_w = rush_w.clip(lower=1e-6)
+        rec_w = rec_w.clip(lower=1e-9) * w.clip(lower=1e-6)
+        if hist_fp > 0 and hist_games > 0:
+            budget = hist_fp / hist_games * GAMES
+        else:
+            budget = float((w * out.loc[grp.index, "pts_full"]).sum())
+        if budget <= 0:
+            continue
+        rec_share_fixed = rec_w / rec_w.sum()
+        rush_mass = float((w * rush_w).sum())
+        rec_mass = float(rec_w.sum())
+        rec_frac = rec_mass / (rush_mass + rec_mass) if (rush_mass + rec_mass) else 0.20
+        rec_pool = rec_frac * budget
+        rush_pool = budget - rec_pool
+
+        def rush_shares(winner):
+            s = pd.Series(0.0, index=grp.index)
+            s.loc[winner] = PRIMARY_SHARE
+            rest_i = grp.index.difference([winner])
+            rw = w.loc[rest_i].clip(lower=1e-9)
+            s.loc[rest_i] = SECONDARY_SHARE * rw / rw.sum()
+            return s
+
+        def pts_from(rs):
+            rush_pts = rush_pool * (rs * rush_w) / (rs * rush_w).sum()
+            rec_pts = rec_pool * rec_share_fixed
+            return rush_pts + rec_pts
+
+        scenarios = {wid: pts_from(rush_shares(wid)) for wid in win_ids}
+        exp_pts = sum((float(p_win.loc[wid]) * scenarios[wid] for wid in win_ids),
+                      pd.Series(0.0, index=grp.index))
+        exp_share = sum((float(p_win.loc[wid]) * rush_shares(wid) for wid in win_ids),
+                        pd.Series(0.0, index=grp.index))
+        # receiving is a usage share too; blend so reported share sums to 1
+        exp_share = 0.5 * exp_share + 0.5 * rec_share_fixed
+        exp_share = exp_share / exp_share.sum()
+        for idx in grp.index:
+            outcomes = [float(scenarios[wid].loc[idx]) for wid in win_ids]
             lo, hi = min(outcomes), max(outcomes)
-            exp = float(budget * exp_share.loc[idx])
+            exp = float(exp_pts.loc[idx])
             out.at[idx, "pts12"] = exp
             if hi - lo >= 0.5:
                 out.at[idx, "p10"] = lo
@@ -222,7 +312,7 @@ def apply_rb_committee_scenarios(df):
             out.at[idx, "role"] = round(float(exp_share.loc[idx]), 2)
             out.at[idx, "role_confidence"] = 0.50 if p > 0 else 0.40
             out.at[idx, "breakout_probability"] = round(p, 3)
-            out.at[idx, "_room_expected"] = budget
+            out.at[idx, "_room_expected"] = float(exp_pts.sum())
             out.at[idx, "_room_budget"] = budget
     return out
 
@@ -283,7 +373,7 @@ def apply_named_qb_prior(df, qb29_unmodified):
     out.loc[low, "p75"] = out.loc[low, "pts12"] * 1.05
     out.loc[low, "p90"] = out.loc[low, "pts12"] * 1.15
     out.loc[low, "role_confidence"] = out.loc[low, "role_confidence"].clip(upper=0.60)
-    out.loc[low, "starter_probability"] = out.loc[low, "starter_probability"].clip(lower=0.85)
+    out.loc[low, "starter_probability"] = out.loc[low, "starter_probability"].fillna(0.85).clip(lower=0.85)
     out["prior_applied"] = False
     out.loc[low, "prior_applied"] = True
     return out, prior
@@ -532,16 +622,16 @@ def value_board(df, ov=None, depth=None, apply_priors=True):
     else:
         d, _ = apply_roles(d, ov)
         d["p10"] = d["p25"] = d["p50"] = d["p75"] = d["p90"] = float("nan")
-        d["starter_probability"] = d["role"].clip(0, 1)
+        d["starter_probability"] = float("nan")
         d["expected_opportunity_share"] = d["role"]
         d["role_confidence"] = d["role"].clip(0, 1)
         d["breakout_probability"] = 0.0
         d["prior_applied"] = False
         d["injury_confidence"] = 1.0
+        d["workload_share"] = pd.to_numeric(d["playerId"].map(RB_WORKLOAD), errors="coerce")
         if not depth.empty:
             sp = dict(zip(depth["player_id"].astype(str), depth["starter_probability"]))
-            has = d["playerId"].map(sp)
-            d["starter_probability"] = has.fillna(d["starter_probability"])
+            d["starter_probability"] = pd.to_numeric(d["playerId"].map(sp), errors="coerce")
         d = transfer_displaced_rb_opportunity(d)
         d = apply_rb_committee_scenarios(d)
         d = apply_qb_split_scenarios(d)
@@ -673,7 +763,7 @@ OUTPUT_COLS = [
 ]
 
 
-def write_report(before, after, info, path="valuation_report.md"):
+def write_report(before, after, info, path="valuation_report.md", prev_tuned=None):
     b = before.set_index(before["playerId"].astype(str))
     a = after.set_index(after["playerId"].astype(str))
     both = a.join(b[["rank", "proj_points", "draft_value", "pos_rank", "role"]], how="inner", rsuffix="_old")
@@ -767,6 +857,10 @@ def write_report(before, after, info, path="valuation_report.md"):
     lines.append("")
     lines.append(_backfield_block(after))
     lines.append("")
+    lines.append("## RB-room validation")
+    lines.append("")
+    lines.append(_rb_validation_block(after, prev_tuned, info))
+    lines.append("")
     lines.append("## Depth-chart / news audit")
     lines.append("")
     if info["flags"]:
@@ -812,12 +906,13 @@ def _driver(r):
 
 UNRESOLVED = [
     "No CFBD dump in this environment, so model.py was not retrained. Tuned board is a post-process of projections_2026.csv.",
-    "Team play/target/TD budgets are still not in the ML; only contested RB rooms share one backfield budget.",
-    "Transfer translation (Nelson, Phillips, Hughes, Brown, Leavitt) is still the v2 ML + from_fcs flag.",
-    "Feagin's RB→TE usage (routes/targets vs 122 carries) is not reprojected; only TE scarcity and FLEX replacement changed.",
+    "Team RB pools for contested rooms use last-year rush+rec components (12-game pace) when sourced; other teams still use independent ML rows.",
+    "Transfer translation (Nelson, Hughes, Brown, Leavitt) is still the v2 ML + from_fcs flag.",
+    "Feagin's RB→TE usage (routes/targets vs 122 carries) is not reprojected; only TE scarcity and FLEX replacement changed. No sourced 2026 receiving-role split.",
     "Named-QB prior is a blend toward 0.90×QB29, not a recruiting/scheme volume model.",
+    "starter_probability is blank unless a depth-chart or committee win model ran. `role` is the role score, not a probability.",
     "Percentiles p10/p50/p90 are managed_season_points when a scenario exists; otherwise they stay null. floor_rank/ceiling_rank still cover the full pool.",
-    "Hardy uses a 2-game 60% ramp plus an 8/10/11-game return band, not a medical week tree.",
+    "Hardy stays at 10 games (mid-September target). Drinkwitz has not given a later date.",
     "Fantrax 2RR / return TD / K / D/ST still absent from the stat extract.",
     "No walk-forward backtest in this pass: data/ is not present.",
     "Tennessee WR stack (Staley/Matthews) still comes from independent ML rows, not one team passing forecast.",
@@ -837,11 +932,104 @@ DIAGNOSTIC_OVER = [
 BACKFIELD_TEAMS = ("TTU", "BOIS", "USC")
 
 
+def _pos_counts(df, n):
+    top = df.nsmallest(n, "rank")
+    return {p: int((top["position"] == p).sum()) for p in ("QB", "RB", "WR", "TE")}
+
+
+def _rb_validation_block(after, prev, info):
+    lines = [
+        "Scoring, replacement levels, and valuation formulas were not changed "
+        f"(scoring_ppr={SCORING_PPR}, WR29={info.get('wr29', 0):.1f}, "
+        f"FLEX={info.get('flex_repl', 0):.1f}, "
+        f"QB28/35/42={info['qb_cuts'][28]:.1f}/{info['qb_cuts'][35]:.1f}/{info['qb_cuts'][42]:.1f}).",
+        "",
+        "`starter_probability` is P(win the RB job) in modeled rooms (sums to 1.0) "
+        "or a sourced named-starter probability. It is blank when no probability model ran. "
+        "`role` remains the role score.",
+        "",
+    ]
+    teams = sorted(after.loc[after["position"].eq("RB") & after["_room_budget"].notna(), "team"].unique()) if "_room_budget" in after.columns else []
+    lines.append("### Team RB point pool and share sum")
+    lines.append("")
+    lines.append("| team | before pool | after pool | before share sum | after share sum | after P(win) |")
+    lines.append("|---|---:|---:|---:|---:|---:|")
+    for team in teams:
+        new = after[(after["team"] == team) & (after["position"] == "RB")]
+        after_pool = float(new["_room_budget"].dropna().iloc[0])
+        after_share = float(new["expected_opportunity_share"].sum())
+        after_p = float(new["starter_probability"].fillna(0).sum())
+        if prev is not None and "projected_points_if_active" in prev.columns:
+            old = prev[(prev["team"] == team) & (prev["position"] == "RB")]
+            before_pool = float(old["projected_points_if_active"].sum()) if len(old) else float("nan")
+            before_share = float(pd.to_numeric(old.get("expected_opportunity_share"), errors="coerce").sum()) if len(old) else float("nan")
+        else:
+            before_pool = before_share = float("nan")
+        lines.append(f"| {team} | {before_pool:.1f} | {after_pool:.1f} | {before_share:.3f} | {after_share:.3f} | {after_p:.3f} |")
+    lines.append("")
+    if prev is not None:
+        lines.append("### Top-112 / top-126 positional composition")
+        lines.append("")
+        lines.append("| cut | when | QB | RB | WR | TE |")
+        lines.append("|---|---|---:|---:|---:|---:|")
+        for n in (112, 126):
+            for label, df in (("before", prev), ("after", after)):
+                c = _pos_counts(df, n)
+                lines.append(f"| top {n} | {label} | {c['QB']} | {c['RB']} | {c['WR']} | {c['TE']} |")
+        lines.append("")
+        old150 = set(prev.nsmallest(150, "rank")["playerId"].astype(str))
+        new150 = set(after.nsmallest(150, "rank")["playerId"].astype(str))
+        entered = after[after["playerId"].astype(str).isin(new150 - old150)].nsmallest(50, "rank")
+        left = prev[prev["playerId"].astype(str).isin(old150 - new150)].nsmallest(50, "rank")
+        lines.append("### Players entering top 150")
+        lines.append("")
+        if entered.empty:
+            lines.append("- none")
+        else:
+            for r in entered.itertuples():
+                lines.append(f"- {r.name} ({r.position} {r.team}) rank {int(r.rank)}")
+        lines.append("")
+        lines.append("### Players leaving top 150")
+        lines.append("")
+        if left.empty:
+            lines.append("- none")
+        else:
+            for r in left.itertuples():
+                lines.append(f"- {r.name} ({r.position} {r.team}) was rank {int(r.rank)}")
+        lines.append("")
+    lines.append("### Manually changed role priors (source URL + as-of)")
+    lines.append("")
+    lines.append("| player | team | P(win) | workload | as-of | source |")
+    lines.append("|---|---|---:|---:|---|---|")
+    depth = load_depth()
+    if not depth.empty:
+        changed = depth[depth["name"].isin([
+            "Cameron Dickey", "J'Koby Williams", "Quinten Joyner",
+            "Dylan Riley", "Sire Gaines", "Juelz Goff",
+            "Waymond Jordan", "King Miller", "Riley Wormley",
+            "Kamari Moulton", "L.J. Phillips Jr.",
+        ])]
+        for r in changed.itertuples():
+            wl = RB_WORKLOAD.get(str(r.player_id), "")
+            wl_s = f"{wl:.2f}" if wl != "" else ""
+            lines.append(f"| {r.name} | {r.team} | {float(r.starter_probability):.2f} | {wl_s} | {r.effective_date} | {r.source_url} |")
+    lines.append("")
+    lines.append("### Input audit (no rank overrides)")
+    lines.append("")
+    lines.append("- L.J. Phillips vs Kamari Moulton: sourced Iowa timeshare. Marked contested; Moulton is the Week 1 favorite. FCS translation still from the ML row, not a hand-entered total.")
+    lines.append("- Malachi Toney: no sourced 2026 role change. Left as the ML WR row.")
+    lines.append("- Kaden Feagin: still TE1 after the RB conversion; no sourced receiving-role tree, so usage was not rebuilt.")
+    lines.append("- Sam Leavitt, Faizon Brandon, Keelon Russell: named-QB facts already in depth_chart; no new sourced demotion/promotion.")
+    lines.append("- Makhi Hughes and Raleek Brown: no sourced 2026 lead-job change. Left as ML + from_fcs.")
+    lines.append("- Ahmad Hardy: Drinkwitz still targeting as soon as possible / mid-September; games=10 unchanged.")
+    return "\n".join(lines)
+
+
 def _backfield_block(after):
     lines = [
         "p10 / p50 / p90 are managed_season_points. "
-        "A contested back's p75/p90 is the job-winning share of the team RB budget; "
-        "every other RB on the team is in the remainder.",
+        "Rush follows mutually exclusive winner scenarios; receiving stays player-specific. "
+        "Every RB on the team is in the remainder.",
         "",
     ]
     for team in BACKFIELD_TEAMS:
@@ -908,15 +1096,16 @@ def _diag_line(r, old):
 
 def main(year=2026):
     src = f"projections_{year}.csv"
+    dest = f"projections_{year}_tuned.csv"
     raw = pd.read_csv(src, dtype={"playerId": str})
+    prev = pd.read_csv(dest, dtype={"playerId": str}) if os.path.exists(dest) else None
     tuned, info = value_board(raw, apply_priors=True)
     out = tuned[OUTPUT_COLS].sort_values("rank")
     for c in ("p10", "p25", "p50", "p75", "p90", "starter_probability",
               "expected_opportunity_share", "role_confidence", "breakout_probability"):
         out[c] = pd.to_numeric(out[c], errors="coerce").round(3)
-    dest = f"projections_{year}_tuned.csv"
     out.to_csv(dest, index=False)
-    write_report(raw, tuned, info)
+    write_report(raw, tuned, info, prev_tuned=prev)
     print(out.head(30).to_string(index=False))
     print("\nlineup", info["counts"])
     print("flex_repl", round(info["flex_repl"], 1), "qb_cuts", {k: round(v, 1) for k, v in info["qb_cuts"].items()})

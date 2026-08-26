@@ -181,6 +181,12 @@ class BoardTests(unittest.TestCase):
         d = self.tuned[self.tuned["name"] == "Jordon Davison"].iloc[0]
         self.assertEqual(float(d["projected_games"]), 12)
 
+    def test_sp_blank_without_probability_model(self):
+        lacy = self.tuned[self.tuned["name"] == "Kewan Lacy"].iloc[0]
+        self.assertTrue(pd.isna(lacy["starter_probability"]))
+        dickey = self.tuned[self.tuned["name"] == "Cameron Dickey"].iloc[0]
+        self.assertGreater(float(dickey["starter_probability"]), 0.3)
+
     def test_mccomb_named_starter(self):
         m = self.tuned[self.tuned["name"] == "David McComb"].iloc[0]
         g = self.tuned[self.tuned["name"] == "Thomas Gotkowski"].iloc[0]
@@ -229,11 +235,8 @@ class BoardTests(unittest.TestCase):
         budget = float(out["_room_budget"].iloc[0])
         self.assertAlmostEqual(room, budget, delta=budget * 0.02)
         self.assertAlmostEqual(float(out["starter_probability"].sum()), 1.0, delta=0.02)
-        win = PRIMARY_SHARE * budget
-        lose = (1.0 - PRIMARY_SHARE) * budget
-        self.assertAlmostEqual(float(out["p90"].iloc[0]), win, delta=0.5)
-        self.assertAlmostEqual(float(out["p75"].iloc[0]), win, delta=0.5)
-        self.assertAlmostEqual(float(out["p10"].iloc[0]), lose, delta=0.5)
+        self.assertAlmostEqual(float(out["p75"].iloc[0]), float(out["p90"].iloc[0]), delta=0.5)
+        self.assertGreater(float(out["p90"].iloc[0]), float(out["p50"].iloc[0]))
         self.assertGreater(float(out["p90"].iloc[0]) - float(out["p10"].iloc[0]), 1)
 
     def test_committee_includes_every_rb(self):
@@ -246,15 +249,15 @@ class BoardTests(unittest.TestCase):
         d["pts_full"] = [159 / CONTESTED_ROLE, 159 / CONTESTED_ROLE, 80 / 0.84]
         d["pts12"] = d["proj_points"]
         d["contested"] = [True, True, False]
-        d["starter_probability"] = [0.5, 0.5, 0.84]
+        d["starter_probability"] = [0.5, 0.5, float("nan")]
         out = apply_rb_committee_scenarios(d)
         budget = float(out["_room_budget"].iloc[0])
         self.assertAlmostEqual(float(out["expected_opportunity_share"].sum()), 1.0, delta=0.02)
         self.assertAlmostEqual(float(out["pts12"].sum()), budget, delta=budget * 0.02)
         self.assertAlmostEqual(float(out.loc[out["contested"], "starter_probability"].sum()), 1.0)
         self.assertEqual(float(out.loc[~out["contested"], "starter_probability"].iloc[0]), 0.0)
-        win = PRIMARY_SHARE * budget
-        self.assertAlmostEqual(float(out.loc[out["name"] == "A", "p90"].iloc[0]), win, delta=0.5)
+        self.assertGreater(float(out.loc[out["name"] == "A", "p90"].iloc[0]),
+                           float(out.loc[out["name"] == "A", "p50"].iloc[0]))
         c = out.loc[out["name"] == "C"].iloc[0]
         self.assertGreater(float(c["pts12"]), 0)
         self.assertGreater(float(c["expected_opportunity_share"]), 0)
@@ -262,25 +265,33 @@ class BoardTests(unittest.TestCase):
             self.assertLess(float(c["p90"]), 0.40 * budget)
 
     def test_ttu_boise_usc_winner_percentiles(self):
-        for team, names in (
-            ("TTU", ["Cameron Dickey", "J'Koby Williams"]),
-            ("BOIS", ["Dylan Riley", "Sire Gaines"]),
-            ("USC", ["King Miller", "Waymond Jordan"]),
-        ):
+        checks = (
+            ("TTU", "Cameron Dickey", "J'Koby Williams", "Quinten Joyner"),
+            ("BOIS", "Dylan Riley", "Sire Gaines", "Juelz Goff"),
+            ("USC", "Waymond Jordan", "King Miller", None),
+        )
+        for team, lead, second, third in checks:
             room = self.tuned[(self.tuned["team"] == team) & (self.tuned["position"] == "RB")]
             self.assertGreater(len(room), 2, team)
             budget = float(room["_room_budget"].dropna().iloc[0])
+            max_full = float(room["pts_full"].max())
+            self.assertNotAlmostEqual(budget, max_full, delta=1.0, msg=f"{team} pool must not be max(pts_full)")
             self.assertAlmostEqual(float(room["expected_opportunity_share"].sum()), 1.0, delta=0.02)
             self.assertAlmostEqual(float(room["pts12"].sum()), budget, delta=budget * 0.02)
             self.assertAlmostEqual(float(room["starter_probability"].sum()), 1.0, delta=0.02)
-            contested = room[room["name"].isin(names)]
-            self.assertEqual(len(contested), 2, team)
-            for _, r in contested.iterrows():
-                self.assertAlmostEqual(float(r["p90"]), PRIMARY_SHARE * budget, delta=3, msg=r["name"])
+            a = room[room["name"] == lead].iloc[0]
+            b = room[room["name"] == second].iloc[0]
+            self.assertGreater(float(a["managed_season_points"]), float(b["managed_season_points"]), team)
+            self.assertGreater(float(a["starter_probability"]), float(b["starter_probability"]), team)
+            for r in (a, b):
                 self.assertAlmostEqual(float(r["p75"]), float(r["p90"]), delta=1, msg=r["name"])
                 self.assertGreater(float(r["p90"]), float(r["p50"]) + 5, msg=r["name"])
                 self.assertAlmostEqual(float(r["p50"]), float(r["managed_season_points"]),
                                        delta=1.5, msg=r["name"])
+            if third:
+                t = room[room["name"] == third].iloc[0]
+                self.assertGreater(float(t["starter_probability"]), 0.05, third)
+                self.assertGreater(float(t["managed_season_points"]), 10, third)
 
     def test_qb_split_shares_sum_to_one(self):
         rows = [
