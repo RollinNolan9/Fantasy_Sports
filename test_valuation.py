@@ -7,7 +7,7 @@ import pandas as pd
 from projections import GAMES, PLAYOFF_WEEKS, SCORING, score_stat
 from valuation import (
     CONTESTED_ROLE, EXPECTED_QBS_ROSTERED_PER_TEAM, FLEX,
-    FLEX_ELIGIBLE, SCORING_PPR, SLOTS, TEAMS, WAIVER_REPLACEMENT_RANK,
+    FLEX_ELIGIBLE, PRIMARY_SHARE, SCORING_PPR, SLOTS, TEAMS, WAIVER_REPLACEMENT_RANK,
     apply_qb_split_scenarios, apply_rb_committee_scenarios,
     lineup_counts, n_qb_starters, n_skill_starters, select_lineup, starter_vorps,
     value_board,
@@ -127,10 +127,16 @@ class BoardTests(unittest.TestCase):
 
     def test_no_nan_inf_ranks(self):
         for col in ["rank", "starter_vorp", "draft_adjusted_value", "managed_vorp",
-                    "projected_ppg"]:
+                    "projected_ppg", "floor_rank", "ceiling_rank"]:
             s = self.tuned[col]
             self.assertFalse(s.isna().any(), col)
             self.assertTrue(all(math.isfinite(float(x)) for x in s.head(2000)), col)
+
+    def test_floor_ceiling_cover_full_pool(self):
+        n = len(self.tuned)
+        for col in ("floor_rank", "ceiling_rank"):
+            r = self.tuned[col].sort_values()
+            self.assertEqual(list(r), list(range(1, n + 1)), col)
 
     def test_percentiles_null_or_distinct(self):
         d = self.tuned
@@ -213,6 +219,7 @@ class BoardTests(unittest.TestCase):
         d["pts12"] = d["proj_points"]
         d["contested"] = True
         d["role_in"] = d["role"]
+        d["starter_probability"] = 0.5
         out = apply_rb_committee_scenarios(d)
         shares = out["expected_opportunity_share"]
         self.assertAlmostEqual(float(shares.sum()), 1.0, delta=0.02)
@@ -221,7 +228,59 @@ class BoardTests(unittest.TestCase):
         room = float(out["_room_expected"].iloc[0])
         budget = float(out["_room_budget"].iloc[0])
         self.assertAlmostEqual(room, budget, delta=budget * 0.02)
+        self.assertAlmostEqual(float(out["starter_probability"].sum()), 1.0, delta=0.02)
+        win = PRIMARY_SHARE * budget
+        lose = (1.0 - PRIMARY_SHARE) * budget
+        self.assertAlmostEqual(float(out["p90"].iloc[0]), win, delta=0.5)
+        self.assertAlmostEqual(float(out["p75"].iloc[0]), win, delta=0.5)
+        self.assertAlmostEqual(float(out["p10"].iloc[0]), lose, delta=0.5)
         self.assertGreater(float(out["p90"].iloc[0]) - float(out["p10"].iloc[0]), 1)
+
+    def test_committee_includes_every_rb(self):
+        rows = [
+            _player(1, "A", "RB", 159, team="TTU", role=CONTESTED_ROLE),
+            _player(2, "B", "RB", 159, team="TTU", role=CONTESTED_ROLE),
+            _player(3, "C", "RB", 80, team="TTU", role=0.84),
+        ]
+        d = pd.DataFrame(rows)
+        d["pts_full"] = [159 / CONTESTED_ROLE, 159 / CONTESTED_ROLE, 80 / 0.84]
+        d["pts12"] = d["proj_points"]
+        d["contested"] = [True, True, False]
+        d["starter_probability"] = [0.5, 0.5, 0.84]
+        out = apply_rb_committee_scenarios(d)
+        budget = float(out["_room_budget"].iloc[0])
+        self.assertAlmostEqual(float(out["expected_opportunity_share"].sum()), 1.0, delta=0.02)
+        self.assertAlmostEqual(float(out["pts12"].sum()), budget, delta=budget * 0.02)
+        self.assertAlmostEqual(float(out.loc[out["contested"], "starter_probability"].sum()), 1.0)
+        self.assertEqual(float(out.loc[~out["contested"], "starter_probability"].iloc[0]), 0.0)
+        win = PRIMARY_SHARE * budget
+        self.assertAlmostEqual(float(out.loc[out["name"] == "A", "p90"].iloc[0]), win, delta=0.5)
+        c = out.loc[out["name"] == "C"].iloc[0]
+        self.assertGreater(float(c["pts12"]), 0)
+        self.assertGreater(float(c["expected_opportunity_share"]), 0)
+        if pd.notna(c["p90"]):
+            self.assertLess(float(c["p90"]), 0.40 * budget)
+
+    def test_ttu_boise_usc_winner_percentiles(self):
+        for team, names in (
+            ("TTU", ["Cameron Dickey", "J'Koby Williams"]),
+            ("BOIS", ["Dylan Riley", "Sire Gaines"]),
+            ("USC", ["King Miller", "Waymond Jordan"]),
+        ):
+            room = self.tuned[(self.tuned["team"] == team) & (self.tuned["position"] == "RB")]
+            self.assertGreater(len(room), 2, team)
+            budget = float(room["_room_budget"].dropna().iloc[0])
+            self.assertAlmostEqual(float(room["expected_opportunity_share"].sum()), 1.0, delta=0.02)
+            self.assertAlmostEqual(float(room["pts12"].sum()), budget, delta=budget * 0.02)
+            self.assertAlmostEqual(float(room["starter_probability"].sum()), 1.0, delta=0.02)
+            contested = room[room["name"].isin(names)]
+            self.assertEqual(len(contested), 2, team)
+            for _, r in contested.iterrows():
+                self.assertAlmostEqual(float(r["p90"]), PRIMARY_SHARE * budget, delta=3, msg=r["name"])
+                self.assertAlmostEqual(float(r["p75"]), float(r["p90"]), delta=1, msg=r["name"])
+                self.assertGreater(float(r["p90"]), float(r["p50"]) + 5, msg=r["name"])
+                self.assertAlmostEqual(float(r["p50"]), float(r["managed_season_points"]),
+                                       delta=1.5, msg=r["name"])
 
     def test_qb_split_shares_sum_to_one(self):
         rows = [
