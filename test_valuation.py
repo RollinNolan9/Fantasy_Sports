@@ -7,10 +7,11 @@ import pandas as pd
 from projections import GAMES, PLAYOFF_WEEKS, SCORING, score_stat
 from valuation import (
     CONTESTED_ROLE, EXPECTED_QBS_ROSTERED_PER_TEAM, FLEX,
-    FLEX_ELIGIBLE, PRIMARY_SHARE, SCORING_PPR, SLOTS, TEAMS, WAIVER_REPLACEMENT_RANK,
+    FLEX_ELIGIBLE, PRIMARY_SHARE, SCORING_PPR, SLOTS, TEAMS,
+    WAIVER_REPLACEMENT_RANK, configured_waiver_rank, percentile_from_scenarios,
     apply_qb_split_scenarios, apply_rb_committee_scenarios,
     lineup_counts, n_qb_starters, n_skill_starters, select_lineup, starter_vorps,
-    value_board,
+    validate_board, value_board, waiver_rank_from_bench,
 )
 
 
@@ -171,11 +172,16 @@ class BoardTests(unittest.TestCase):
         h = self.tuned[self.tuned["name"] == "Ahmad Hardy"].iloc[0]
         missed = 12 - float(h["projected_games"])
         self.assertEqual(missed, 2)
-        expected = missed * float(h["waiver_replacement_ppg"])
-        self.assertAlmostEqual(float(h["replacement_points_during_absences"]), expected, delta=1.5)
-        self.assertEqual(int(h["waiver_replacement_rank"]), WAIVER_REPLACEMENT_RANK)
-        # ramped PPG is below full-workload 21.16
+        self.assertIsNone(configured_waiver_rank())
+        self.assertTrue(pd.isna(h["waiver_replacement_rank"])
+                        or str(h["waiver_replacement_rank"]) in ("", "nan", "<NA>"))
+        # no hidden RB100 default: missed weeks are 0 until bench/IR is set
+        self.assertAlmostEqual(float(h["replacement_points_during_absences"]), 0.0, delta=0.1)
         self.assertLess(float(h["projected_ppg"]), 21.0)
+        # sensitivity is reported, not baked into ranks
+        sens = self.info["waiver_sensitivity"]
+        self.assertEqual(sens[0]["waiver_rank"], waiver_rank_from_bench(0))
+        self.assertEqual(sens[1]["waiver_rank"], 42)
 
     def test_davison_not_stuck_on_2025_injury(self):
         d = self.tuned[self.tuned["name"] == "Jordon Davison"].iloc[0]
@@ -206,13 +212,14 @@ class BoardTests(unittest.TestCase):
     def test_unavailable_week_gets_replacement(self):
         h = self.tuned[self.tuned["name"] == "Ahmad Hardy"].iloc[0]
         self.assertEqual(h["projected_games"], 10)
-        self.assertGreater(h["replacement_points_during_absences"], 0)
         self.assertAlmostEqual(
             h["managed_season_points"],
             h["raw_season_points"] + h["replacement_points_during_absences"],
             places=1,
         )
-        self.assertGreater(h["managed_season_points"], h["raw_season_points"])
+        # 10-game assumption preserved; replacement is 0 while bench/IR is unknown
+        self.assertAlmostEqual(float(h["replacement_points_during_absences"]), 0.0, delta=0.1)
+        self.assertGreaterEqual(float(h["raw_season_points"]), 150)
 
     def test_scenario_probabilities_sum_to_one(self):
         # synthetic two-RB room
@@ -235,9 +242,14 @@ class BoardTests(unittest.TestCase):
         budget = float(out["_room_budget"].iloc[0])
         self.assertAlmostEqual(room, budget, delta=budget * 0.02)
         self.assertAlmostEqual(float(out["starter_probability"].sum()), 1.0, delta=0.02)
-        self.assertAlmostEqual(float(out["p75"].iloc[0]), float(out["p90"].iloc[0]), delta=0.5)
-        self.assertGreater(float(out["p90"].iloc[0]), float(out["p50"].iloc[0]))
+        # 50/50: p75 may equal p90; a 10% ceiling must not be required to equal p75
+        self.assertGreaterEqual(float(out["p75"].iloc[0]), float(out["p50"].iloc[0]) - 1e-6)
+        self.assertGreaterEqual(float(out["p90"].iloc[0]), float(out["p75"].iloc[0]) - 1e-6)
         self.assertGreater(float(out["p90"].iloc[0]) - float(out["p10"].iloc[0]), 1)
+        # role is not overwritten with share
+        self.assertAlmostEqual(float(out["role"].iloc[0]), CONTESTED_ROLE, places=2)
+        self.assertFalse(math.isclose(float(out["expected_opportunity_share"].iloc[0]),
+                                      float(out["role"].iloc[0]), abs_tol=0.01))
 
     def test_committee_includes_every_rb(self):
         rows = [
@@ -255,7 +267,7 @@ class BoardTests(unittest.TestCase):
         self.assertAlmostEqual(float(out["expected_opportunity_share"].sum()), 1.0, delta=0.02)
         self.assertAlmostEqual(float(out["pts12"].sum()), budget, delta=budget * 0.02)
         self.assertAlmostEqual(float(out.loc[out["contested"], "starter_probability"].sum()), 1.0)
-        self.assertEqual(float(out.loc[~out["contested"], "starter_probability"].iloc[0]), 0.0)
+        self.assertTrue(pd.isna(out.loc[~out["contested"], "starter_probability"].iloc[0]))
         self.assertGreater(float(out.loc[out["name"] == "A", "p90"].iloc[0]),
                            float(out.loc[out["name"] == "A", "p50"].iloc[0]))
         c = out.loc[out["name"] == "C"].iloc[0]
@@ -284,10 +296,13 @@ class BoardTests(unittest.TestCase):
             self.assertGreater(float(a["managed_season_points"]), float(b["managed_season_points"]), team)
             self.assertGreater(float(a["starter_probability"]), float(b["starter_probability"]), team)
             for r in (a, b):
-                self.assertAlmostEqual(float(r["p75"]), float(r["p90"]), delta=1, msg=r["name"])
-                self.assertGreater(float(r["p90"]), float(r["p50"]) + 5, msg=r["name"])
-                self.assertAlmostEqual(float(r["p50"]), float(r["managed_season_points"]),
-                                       delta=1.5, msg=r["name"])
+                self.assertLessEqual(float(r["p10"]), float(r["p25"]) + 1e-6, r["name"])
+                self.assertLessEqual(float(r["p25"]), float(r["p50"]) + 1e-6, r["name"])
+                self.assertLessEqual(float(r["p50"]), float(r["p75"]) + 1e-6, r["name"])
+                self.assertLessEqual(float(r["p75"]), float(r["p90"]) + 1e-6, r["name"])
+                # p50 is the CDF median; it need not equal the weighted mean
+                self.assertGreater(float(r["p90"]) - float(r["p10"]), 5, msg=r["name"])
+                self.assertAlmostEqual(float(r["role"]), CONTESTED_ROLE, delta=0.05)
             if third:
                 t = room[room["name"] == third].iloc[0]
                 self.assertGreater(float(t["starter_probability"]), 0.05, third)
@@ -312,6 +327,58 @@ class BoardTests(unittest.TestCase):
         self.assertIn("RB", FLEX_ELIGIBLE)
         self.assertIn("TE", FLEX_ELIGIBLE)
         self.assertEqual(FLEX, 2)
+
+    def test_build_validations_pass(self):
+        validate_board(self.tuned)
+        self.assertTrue((self.tuned["rank"] == self.tuned["draft_adjusted_rank"]).all())
+        self.assertTrue((self.tuned["scoring_ppr"] == 0.5).all())
+        with open("valuation.py") as fh:
+            src = fh.read()
+        self.assertNotIn("if player_name ==", src)
+        self.assertNotIn('if name == "', src)
+
+    def test_null_distinct_from_zero(self):
+        lacy = self.tuned[self.tuned["name"] == "Kewan Lacy"].iloc[0]
+        self.assertTrue(pd.isna(lacy["starter_probability"]))
+        self.assertTrue(pd.isna(lacy["breakout_probability"]))
+        self.assertTrue(pd.isna(lacy["expected_opportunity_share"]))
+        doll = self.tuned[self.tuned["name"] == "Brevin Doll"].iloc[0]
+        self.assertTrue(pd.isna(doll["starter_probability"]))
+        self.assertGreater(float(doll["expected_opportunity_share"]), 0)
+
+    def test_probability_fields_not_aliases(self):
+        dickey = self.tuned[self.tuned["name"] == "Cameron Dickey"].iloc[0]
+        self.assertGreater(abs(float(dickey["starter_probability"])
+                               - float(dickey["breakout_probability"])), 0.05)
+        self.assertGreater(abs(float(dickey["role"])
+                               - float(dickey["expected_opportunity_share"])), 0.05)
+        self.assertGreater(abs(float(dickey["role_confidence"])
+                               - float(dickey["starter_probability"])), 0.05)
+
+    def test_percentile_cdf_ten_percent_ceiling_is_not_p75(self):
+        values, probs = [100.0, 150.0, 300.0], [0.58, 0.32, 0.10]
+        self.assertEqual(percentile_from_scenarios(values, probs, 0.10), 100.0)
+        self.assertEqual(percentile_from_scenarios(values, probs, 0.75), 150.0)
+        self.assertEqual(percentile_from_scenarios(values, probs, 0.90), 150.0)
+        mean = 100.0 * 0.58 + 150.0 * 0.32 + 300.0 * 0.10
+        self.assertNotAlmostEqual(percentile_from_scenarios(values, probs, 0.50), mean, delta=5)
+
+    def test_usc_iowa_rooms_are_reconciled(self):
+        usc = self.tuned[(self.tuned["team"] == "USC") & (self.tuned["position"] == "RB")]
+        iowa = self.tuned[(self.tuned["team"] == "IOWA") & (self.tuned["position"] == "RB")]
+        self.assertGreaterEqual(float(usc["pts12"].sum()), 300)
+        self.assertLessEqual(float(usc["pts12"].sum()), 380)
+        self.assertGreaterEqual(float(iowa["pts12"].sum()), 240)
+        self.assertLessEqual(float(iowa["pts12"].sum()), 320)
+        jordan = usc[usc["name"] == "Waymond Jordan"].iloc[0]
+        miller = usc[usc["name"] == "King Miller"].iloc[0]
+        moulton = iowa[iowa["name"] == "Kamari Moulton"].iloc[0]
+        phillips = iowa[iowa["name"] == "L.J. Phillips Jr."].iloc[0]
+        # ranges are audits, not hardcoded outputs
+        self.assertGreater(float(jordan["managed_season_points"]), float(miller["managed_season_points"]))
+        self.assertGreater(float(miller["managed_season_points"]), 100)
+        self.assertGreater(float(moulton["managed_season_points"]), 90)
+        self.assertGreater(float(phillips["managed_season_points"]), 90)
 
 
 if __name__ == "__main__":
